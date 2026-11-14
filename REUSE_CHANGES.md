@@ -25,7 +25,7 @@
   Benchmarks: removed VTI, IVV (almost the same as SPY) and VT (almost the same as ACWI).
 - Main page: a link to the Rule Lab.
 - `requirements.txt`: added `matplotlib` for the evidence figures.
-- Changed after feedback on Assignment 1: the feedback was. In response we changed:
+- Changed after feedback on Assignment 1: the instructor asked us to turn the product into a fund finder by the yearly return a user wants, to make the start page clear to a beginner within seconds, to remove texts about adverts, to clean the fund and benchmark lists, to keep the Deep analysis and the Honesty panel visible, to let the user pick one fund, to limit the input to 0–1000% and to show funds without data instead of hiding them. In response we changed:
   (1) the product idea: the start page is now a fund finder (enter the yearly return you want, see the funds that gave as much or more in the chosen period, sorted closest first, with CAGR, volatility and Sharpe); the original claim check is kept as the detailed page of each fund;
   (2) the start page design: a new title and subtitle in plain words, one main field "Desired return, % per year" (0 to 1000, checked in the browser and on the server), period, benchmark and an optional fund under "Additional settings", texts about adverts removed, the "not a forecast, not investment advice" warning kept at the top;
   (3) honesty on the start page: a Deep analysis that explains where each number comes from (CAGR from the first and last price, volatility, Sharpe with the FRED rate) and why a fund is in the list or not, plus the Honesty panel with sources, dates actually used and offline status;
