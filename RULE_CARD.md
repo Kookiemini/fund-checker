@@ -1,3 +1,6 @@
+git add .
+git commit -m "AI_USE: Rule Card fields reviewed by the team"
+git push
 # Rule Card — MA10 on SPY (rule version v1)
 
 Status: **draft v1** (G0). Revise after feedback (G1), then freeze with the git tag `freeze-w13` (G2).
