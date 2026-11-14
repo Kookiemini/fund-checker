@@ -1,0 +1,15 @@
+# Веб-сервер с простым HTML-шаблоном
+flask>=3.0
+# Загрузка цен с Yahoo Finance
+yfinance>=0.2.40
+# Таблицы и математика
+pandas>=2.0
+numpy>=1.24
+# Запрос к FRED API (risk-free rate)
+requests>=2.31
+# Чтение ключа из файла .env
+python-dotenv>=1.0
+# Графики для evidence/ (Rule Lab)
+matplotlib>=3.7
+# Тесты
+pytest>=8.0

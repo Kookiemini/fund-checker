@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fund Finder: which fund gave the return you want?</title>
+  <style>
+    /* ---- Same design tokens as the detailed page (templates/index.html) ---- */
+    :root {
+      --ink: #1b2733;
+      --muted: #5b6b7a;
+      --line: #dde3ea;
+      --page: #f5f7fa;
+      --card: #ffffff;
+      --accent: #1f5fbf;
+      --good: #1e7a46;  --good-bg: #eaf6ef;
+      --bad: #b3261e;   --bad-bg: #fbecea;
+      --neutral: #44546a; --neutral-bg: #eef2f6;
+      --warn: #7a5200;  --warn-bg: #fff6dc;
+      --info: #1f4f8f;  --info-bg: #eaf1fb;  --info-line: #c9daf2;
+      --radius: 10px;
+      --font: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.55 var(--font); }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 48px 20px 32px; }
+
+    nav.top { text-align: right; font-size: 14px; margin: -24px 0 16px; }
+    nav.top a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    /* ---- Top: title, subtitle and disclaimer, centered ---- */
+    .hero { text-align: center; }
+    h1 { font-size: 30px; line-height: 1.2; font-weight: 650; margin: 0 0 8px; }
+    .sub { font-size: 17px; color: var(--muted); margin: 0 auto 16px; max-width: 600px; }
+    h2 { font-size: 18px; line-height: 1.3; font-weight: 600; margin: 0 0 12px; }
+    section { margin-top: 32px; }
+    p { margin: 0; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+    .disclaimer { display: inline-block; font-size: 13px; font-weight: 600; color: var(--warn); background: var(--warn-bg);
+      border: 1px solid #ecd58a; border-radius: 999px; padding: 4px 12px; margin-bottom: 24px; }
+
+    /* ---- Main form: a compact field and a button, centered ---- */
+    form { padding: 24px; }
+    .main { max-width: 520px; margin: 0 auto; text-align: center; }
+    .main-label { display: block; font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+    .main-row { display: flex; justify-content: center; gap: 12px; }
+    .pct { position: relative; flex: 1 1 auto; max-width: 340px; }
+    .pct input { width: 100%; height: 52px; font: inherit; font-size: 22px; font-weight: 600; padding: 0 40px 0 14px;
+      color: var(--ink); background: var(--card); border: 1px solid #c3ccd6; border-radius: 8px; font-variant-numeric: tabular-nums; }
+    .pct input { -moz-appearance: textfield; appearance: textfield; }   /* no spin arrows over the % sign */
+    .pct input::-webkit-outer-spin-button, .pct input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .pct span { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); font-size: 18px; color: var(--muted); }
+    .go { height: 52px; padding: 0 24px; font: inherit; font-size: 16px; font-weight: 600; background: var(--accent); color: #fff;
+      border: 0; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+    .go:hover { background: #194f9e; }
+    .hint { font-size: 13px; color: var(--muted); margin-top: 8px; }
+
+    /* ---- Additional settings, hidden by default ---- */
+    details.settings { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 16px; }
+    details.settings summary { cursor: pointer; font-size: 14px; font-weight: 600; color: var(--accent); text-align: center; }
+    .extra { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+    .extra label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+    .extra input, .extra select { font: inherit; font-size: 15px; height: 40px; padding: 0 12px; border-radius: 8px;
+      color: var(--ink); background: var(--card); border: 1px solid #c3ccd6; width: 100%; }
+    .extra select { appearance: none; -webkit-appearance: none; padding-right: 32px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%235b6b7a' stroke-width='2'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 12px center; }
+    .extra .hint { grid-column: 1 / -1; margin: 0; }
+    input:focus-visible, select:focus-visible, button:focus-visible, summary:focus-visible, a:focus-visible {
+      outline: 3px solid rgba(31, 95, 191, .35); outline-offset: 1px; }
+
+    /* ---- Messages ---- */
+    .error, .offline, .empty { margin-top: 16px; padding: 12px 16px; border-radius: var(--radius); border-left: 4px solid; font-size: 14px; }
+    .error { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+    .offline { background: var(--warn-bg); color: var(--warn); border-color: #d9a400; }
+    .offline ul { margin: 6px 0 0; padding-left: 20px; }
+    .empty { background: var(--neutral-bg); color: var(--neutral); border-color: var(--neutral); font-size: 15px; }
+    .empty b { display: block; margin-bottom: 4px; }
+
+    /* ---- Selected fund card ---- */
+    .chosen { padding: 16px 20px; border-left: 6px solid var(--neutral); }
+    .chosen.good { border-left-color: var(--good); }
+    .chosen.short { border-left-color: var(--warn); }
+    .tag { display: inline-block; font-size: 12px; font-weight: 600; color: var(--accent); background: var(--info-bg);
+      border: 1px solid var(--info-line); border-radius: 999px; padding: 2px 10px; margin-bottom: 8px; }
+    .chosen .name { font-size: 18px; font-weight: 650; }
+    .chosen .name a { color: var(--accent); text-decoration: none; }
+    .chosen .name a:hover { text-decoration: underline; }
+    .chosen .desc { color: var(--muted); font-size: 13px; }
+    .chosen .status { margin-top: 8px; font-weight: 600; }
+    .chosen.good .status { color: var(--good); }
+    .chosen.short .status { color: var(--warn); }
+    .chosen .nums { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 10px; font-size: 14px; font-variant-numeric: tabular-nums; }
+    .chosen .nums span { color: var(--muted); }
+
+    /* ---- Results ---- */
+    .found { font-size: 15px; color: var(--muted); margin-bottom: 12px; }
+    .found b { color: var(--good); }
+    .table-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { padding: 12px 16px; border-bottom: 1px solid var(--line); text-align: right; vertical-align: top; font-variant-numeric: tabular-nums; }
+    th { font-size: 13px; font-weight: 600; color: var(--muted); background: #fafbfc; }
+    th small { display: block; font-weight: 400; }
+    th:first-child, td:first-child { text-align: left; }
+    tr:last-child td { border-bottom: 0; }
+    td a { color: var(--accent); font-weight: 650; font-size: 16px; text-decoration: none; }
+    td a:hover { text-decoration: underline; }
+    td .desc { display: block; color: var(--muted); font-size: 13px; }
+    .short-note { display: block; color: var(--warn); font-size: 12px; }
+    td.ret { color: var(--good); font-weight: 600; font-size: 16px; }
+    .nodata { padding: 16px 20px; }
+    .nodata ul { margin: 0; padding-left: 20px; font-size: 14px; }
+    .nodata li { margin-bottom: 6px; }
+    .nodata small { color: var(--muted); }
+    .skipped { margin-top: 12px; font-size: 13px; color: var(--muted); }
+
+    /* ---- Deep analysis: neutral blue panels, as on the detailed page ---- */
+    .deep { display: grid; gap: 16px; }
+    .panel { background: var(--info-bg); border: 1px solid var(--info-line); border-radius: var(--radius); padding: 16px 20px; font-size: 14px; }
+    .panel h3 { font-size: 15px; line-height: 1.3; font-weight: 600; margin: 0 0 8px; color: var(--info); }
+    .panel p { margin: 0 0 8px; }
+    .panel p:last-child { margin-bottom: 0; }
+    .panel ul { margin: 0; padding-left: 20px; }
+    .panel li { margin-bottom: 6px; }
+    .panel details { border-top: 1px solid var(--info-line); padding: 8px 0; }
+    .panel details:first-of-type { border-top: 0; }
+    .panel summary { cursor: pointer; font-weight: 600; color: var(--info); }
+    .panel details ul { margin-top: 8px; }
+    .panel.warning { background: var(--warn-bg); border-color: #ecd58a; color: var(--warn); }
+
+    /* ---- Honesty panel, as on the detailed page ---- */
+    .honesty { padding: 20px; }
+    .honesty table { font-size: 13px; border: 1px solid var(--line); border-radius: 8px; }
+    .honesty th, .honesty td { text-align: left; padding: 8px 12px; font-variant-numeric: normal; }
+    .honesty td small { display: block; color: var(--muted); }
+    .honesty ul { margin: 16px 0; padding-left: 20px; font-size: 14px; }
+    .honesty li { margin-bottom: 4px; }
+    footer { margin-top: 32px; font-size: 13px; color: var(--muted); text-align: center; }
+
+    @media (max-width: 640px) {
+      .wrap { padding-top: 32px; }
+      h1 { font-size: 24px; }
+      .sub { font-size: 15px; }
+      form { padding: 20px 16px; }
+      .main-row { flex-direction: column; align-items: stretch; }
+      .pct { max-width: none; }
+      .extra { grid-template-columns: 1fr; }
+      th, td { padding: 10px 12px; }
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="top"><a href="/rule-lab">Rule Lab: would a simple rule have helped? &rarr;</a></nav>
+  <div class="hero">
+    <h1>Which fund could give you the return you want?</h1>
+    <p class="sub">Enter the yearly profit you would like, and we will show the funds that gave the same or more in the past.</p>
+    <p class="disclaimer">Historical data. Not a forecast. Not investment advice.</p>
+  </div>
+
+  <!-- The form is sent with GET: values end up in the address bar -->
+  <form class="card" method="get" action="/">
+    <div class="main">
+      <label class="main-label" for="target">Desired return, % per year</label>
+      <div class="main-row">
+        <div class="pct">
+          <input id="target" type="number" name="target" value="{{ form.target }}" placeholder="e.g. 12"
+                 min="0" max="{{ max_target }}" step="any" inputmode="decimal" autocomplete="off" required autofocus>
+          <span>%</span>
+        </div>
+        <button class="go" type="submit">Find funds</button>
+      </div>
+      <p class="hint">A number from 0 to {{ max_target }}. For example, 12 means you want your money to grow by 12% a year on average.</p>
+    </div>
+
+    <details class="settings" {% if error or form.my_fund %}open{% endif %}>
+      <summary>Additional settings</summary>
+      <div class="extra">
+        <label>Fund (optional)
+          <select name="my_fund">
+            <option value="{{ no_fund }}" {% if form.my_fund == no_fund %}selected{% endif %}>Without a fund: show all that fit</option>
+            {% for f in funds %}<option value="{{ f }}" {% if f == form.my_fund %}selected{% endif %}>{{ f }}: {{ fund_labels[f] }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Compare with (used on the detailed fund page)
+          <select name="benchmark">
+            {% for b in benchmarks %}<option value="{{ b }}" {% if b == form.benchmark %}selected{% endif %}>{{ benchmark_labels[b] }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>From <input type="date" name="start" value="{{ form.start }}" min="{{ min_date }}" max="{{ max_date }}" required></label>
+        <label>To <input type="date" name="end" value="{{ form.end }}" min="{{ min_date }}" max="{{ max_date }}" required></label>
+        <p class="hint">Choose a fund to see it first, even if it gave less than you want. Period: from {{ min_date }} to today; the default is the last 3 years.</p>
+      </div>
+    </details>
+  </form>
+
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% if result %}
+    {% if result.offline_messages %}
+      <div class="offline">
+        <b>Using saved data (not freshly downloaded).</b>
+        <ul>{% for m in result.offline_messages %}<li>{{ m }}</li>{% endfor %}</ul>
+      </div>
+    {% endif %}
+    {% for w in result.save_warnings %}<div class="offline">{{ w }}</div>{% endfor %}
+
+    <!-- The fund chosen in Additional settings: always first, even if it gave less than the target -->
+    {% set s = result.selected %}
+    {% if s %}
+    <section>
+      <div class="card chosen {% if s.no_data %}{% elif s.meets %}good{% else %}short{% endif %}" id="selected-fund">
+        <span class="tag">Your selected fund</span>
+        <div class="name">{% if s.link %}<a href="{{ s.link }}">{{ s.fund }}</a>{% else %}{{ s.fund }}{% endif %}</div>
+        <div class="desc">{{ s.description }}</div>
+        <p class="status">{{ s.status }}</p>
+        {% if not s.no_data %}
+        <div class="nums">
+          <div><span>Return per year (CAGR):</span> <b>{{ s.cagr }}</b></div>
+          <div><span>Volatility:</span> <b>{{ s.volatility }}</b></div>
+          <div><span>Sharpe ratio:</span> <b>{{ s.sharpe }}</b></div>
+        </div>
+        {% if s.first_date %}<span class="short-note">Data only from {{ s.first_date }}; the calculation starts on that date.</span>{% endif %}
+        {% endif %}
+      </div>
+    </section>
+    {% endif %}
+
+    <section>
+      {% if result.matches %}
+        <h2>{% if s %}Other funds{% else %}Funds{% endif %} that gave {{ result.target }} a year or more</h2>
+        <p class="found">Period: {{ result.period }}. Found <b>{{ result.matches | length }}</b>.
+          The closest to your target is at the top. Click a fund to see the full check.</p>
+        <div class="card table-wrap">
+          <table id="matches">
+            <tr>
+              <th>Fund</th>
+              <th>Return per year<small>CAGR</small></th>
+              <th>How much it swings<small>volatility</small></th>
+              <th>Return for the risk<small>Sharpe ratio</small></th>
+            </tr>
+            {% for r in result.matches %}
+            <tr>
+              <td><a href="{{ r.link }}">{{ r.fund }}</a>
+                <span class="desc">{{ r.description }}</span>
+                {% if r.first_date %}<span class="short-note">Data only from {{ r.first_date }}; the calculation starts on that date.</span>{% endif %}</td>
+              <td class="ret">{{ r.cagr }}</td>
+              <td>{{ r.volatility }}</td>
+              <td>{{ r.sharpe }}</td>
+            </tr>
+            {% endfor %}
+          </table>
+        </div>
+      {% else %}
+        <div class="empty">
+          <b>No {% if s %}other {% endif %}fund in our list gave {{ result.target }} a year or more in this period ({{ result.period }}).</b>
+          Try a lower number{% if result.best %}: the best result was {{ result.best.cagr }} a year ({{ result.best.fund }}){% endif %}.
+        </div>
+      {% endif %}
+      {% for note in result.skipped %}<p class="skipped">{{ note }}</p>{% endfor %}
+    </section>
+
+    {% if result.no_data %}
+    <section>
+      <h2>Funds without data for this period</h2>
+      <div class="card nodata" id="no-data">
+        <ul>{% for n in result.no_data %}<li><b>{{ n.fund }}</b> <small>{{ n.description }}</small><br>{{ n.text }}</li>{% endfor %}</ul>
+      </div>
+    </section>
+    {% endif %}
+
+    <!-- Deep analysis: where the numbers come from. All numbers come ready from app.py (formulas in core.py) -->
+    <section>
+      <h2>Deep analysis</h2>
+      <div class="deep">
+        <div class="panel">
+          <h3>How the numbers are calculated</h3>
+          {% for paragraph in result.deep.general %}<p>{{ paragraph }}</p>{% endfor %}
+        </div>
+
+        {% if result.deep.why %}
+        <div class="panel">
+          <h3>Why a fund is in the list or not</h3>
+          <p>A fund is in the list if its return per year (CAGR) over the period is at least the {{ result.target }} you want.</p>
+          <ul>{% for line in result.deep.why %}<li>{{ line }}</li>{% endfor %}</ul>
+        </div>
+        {% endif %}
+
+        {% if result.deep.funds %}
+        <div class="panel">
+          <h3>Where each number comes from</h3>
+          {% for r in result.deep.funds %}
+          <details {% if loop.first %}open{% endif %}>
+            <summary>{{ r.fund }}: {{ r.cagr }} per year</summary>
+            <ul>{% for line in r.explain %}<li>{{ line }}</li>{% endfor %}</ul>
+          </details>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="panel warning">{{ result.deep.warning }}</div>
+      </div>
+    </section>
+
+    <!-- Honesty panel: where the data come from -->
+    <section>
+      <h2>Honesty panel</h2>
+      <div class="card honesty">
+        <div class="table-wrap">
+          <table>
+            <tr><th>Series</th><th>Source and field</th><th>Currency, adjusted, frequency</th><th>Pull date and file</th><th>Data in file</th></tr>
+            {% for s in result.honesty.series %}
+            <tr>
+              <td><b>{{ s.role }}</b><small>{{ s.ticker }}</small></td>
+              <td>{{ s.source }}<small>{{ s.field }}</small></td>
+              <td>{{ s.currency }}<small>Adjusted: {% if s.adjusted is none %}not applicable (a rate){% elif s.adjusted %}yes (dividends and splits){% else %}no{% endif %}; {{ s.frequency }}</small></td>
+              <td>{{ s.pull_date }}<small>{% if s.offline %}saved file {{ s.file }}{% else %}downloaded today{% if s.file %} (saved as {{ s.file }}){% endif %}{% endif %}</small></td>
+              <td>{{ s.first_date }} to {{ s.last_date }}</td>
+            </tr>
+            {% endfor %}
+          </table>
+        </div>
+        <ul>
+          <li>Price source: {{ result.honesty.price_source }}. Rate source: {{ result.honesty.rate_source }}. Two different sources.</li>
+          <li>Currency: prices in USD; the risk-free rate in % per year.</li>
+          <li>Period you chose: {{ result.honesty.requested_start }} to {{ result.honesty.requested_end }}, frequency: daily.
+              Dates actually used:
+              {% for fund, first, last in result.honesty.used %}{{ fund }} {{ first }} to {{ last }}{% if not loop.last %}; {% endif %}{% endfor %}.
+              A fund whose data start later than the date you chose is calculated from its first date (marked in the list).</li>
+          <li>Risk-free observations in the period: {{ result.honesty.n_rf_observations }}.</li>
+          <li>The benchmark is not used for this list; it is used on the detailed fund page.</li>
+          <li>Survivorship: the funds offered here exist today. Funds that were closed or merged during the period
+              are not in the list, so a real-life choice of funds could look worse than shown.</li>
+          <li>Offline mode: if the internet or a data source is not available, the app loads the latest saved files from
+              data/raw/ and says so at the top of the page.
+              This run: {% if result.honesty.offline %}<b>saved data was used</b> (see the message at the top){% else %}<b>fresh download</b>{% endif %}.</li>
+        </ul>
+        <b>Historical data. Not a forecast. Not investment advice.</b>
+      </div>
+    </section>
+  {% endif %}
+
+  <footer>Historical data. Not a forecast. Not investment advice. Past returns do not guarantee future returns.</footer>
+</div>
+</body>
+</html>

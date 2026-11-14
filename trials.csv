@@ -1,0 +1,21 @@
+date,config_id,rule_version,param,window_start,window_end,sharpe,cagr,mdd,sample,comment
+2026-11-14,MA8,v1,8,2001-01,2012-12,0.8111,0.0834,-0.0795,train,make_evidence run
+2026-11-14,MA8,v1,8,2013-01,2018-12,1.1654,0.1125,-0.1199,validation,make_evidence run
+2026-11-14,MA9,v1,9,2001-01,2012-12,0.7600,0.0801,-0.1206,train,make_evidence run
+2026-11-14,MA9,v1,9,2013-01,2018-12,0.9143,0.0952,-0.1494,validation,make_evidence run
+2026-11-14,MA10,v1,10,2001-01,2012-12,0.6380,0.0714,-0.1662,train,make_evidence run; main configuration
+2026-11-14,MA10,v1,10,2013-01,2018-12,0.9143,0.0952,-0.1494,validation,make_evidence run; main configuration
+2026-11-14,MA11,v1,11,2001-01,2012-12,0.5906,0.0658,-0.1662,train,make_evidence run
+2026-11-14,MA11,v1,11,2013-01,2018-12,0.9143,0.0952,-0.1494,validation,make_evidence run
+2026-11-14,MA12,v1,12,2001-01,2012-12,0.6678,0.0713,-0.1662,train,make_evidence run
+2026-11-14,MA12,v1,12,2013-01,2018-12,0.9143,0.0952,-0.1494,validation,make_evidence run
+2026-11-14,MA8,v1,8,2001-01,2012-12,0.8111,0.0834,-0.0795,train,make_evidence run
+2026-11-14,MA8,v1,8,2013-01,2018-12,1.1654,0.1125,-0.1199,validation,make_evidence run
+2026-11-14,MA9,v1,9,2001-01,2012-12,0.7600,0.0801,-0.1206,train,make_evidence run
+2026-11-14,MA9,v1,9,2013-01,2018-12,0.9143,0.0952,-0.1494,validation,make_evidence run
+2026-11-14,MA10,v1,10,2001-01,2012-12,0.6380,0.0714,-0.1662,train,make_evidence run; main configuration
+2026-11-14,MA10,v1,10,2013-01,2018-12,0.9143,0.0952,-0.1494,validation,make_evidence run; main configuration
+2026-11-14,MA11,v1,11,2001-01,2012-12,0.5906,0.0658,-0.1662,train,make_evidence run
+2026-11-14,MA11,v1,11,2013-01,2018-12,0.9143,0.0952,-0.1494,validation,make_evidence run
+2026-11-14,MA12,v1,12,2001-01,2012-12,0.6678,0.0713,-0.1662,train,make_evidence run
+2026-11-14,MA12,v1,12,2013-01,2018-12,0.9143,0.0952,-0.1494,validation,make_evidence run

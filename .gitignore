@@ -1,0 +1,10 @@
+# Секреты
+.env
+.env.*
+!.env.example
+# Виртуальное окружение и кэш Python
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+.DS_Store
