@@ -1,6 +1,7 @@
 # Reuse and changes (Assignment 1 → Assignment 2)
 
 ## Reused from Assignment 1
+- Assignment 1 was not kept in Git; this repository was created for Assignment 2 from the Assignment 1 code (fund-checker_1), so the history starts here.
 - **Data loader `data.py`**: `get_prices` (Yahoo Finance, Adjusted Close) and `get_risk_free` (FRED DGS3MO),
   the saved files in `data/raw/`, the offline fallback and its messages, `DataError`. Used as is by `make_evidence.py`.
 - **Flask app `app.py`** and the page style (colours, cards, the honesty panel layout): the Rule Lab is a new page of the same app.
@@ -25,6 +26,7 @@
   Benchmarks: removed VTI, IVV (almost the same as SPY) and VT (almost the same as ACWI).
 - Main page: a link to the Rule Lab.
 - `requirements.txt`: added `matplotlib` for the evidence figures.
+- Speed (`app.py`): fund prices are downloaded 4 at a time, kept in memory for one hour and preloaded when the site starts; the data sources, saved files and offline mode in `data.py` are unchanged.
 - Changed after feedback on Assignment 1: the instructor asked us to turn the product into a fund finder by the yearly return a user wants, to make the start page clear to a beginner within seconds, to remove texts about adverts, to clean the fund and benchmark lists, to keep the Deep analysis and the Honesty panel visible, to let the user pick one fund, to limit the input to 0–1000% and to show funds without data instead of hiding them. In response we changed:
   (1) the product idea: the start page is now a fund finder (enter the yearly return you want, see the funds that gave as much or more in the chosen period, sorted closest first, with CAGR, volatility and Sharpe); the original claim check is kept as the detailed page of each fund;
   (2) the start page design: a new title and subtitle in plain words, one main field "Desired return, % per year" (0 to 1000, checked in the browser and on the server), period, benchmark and an optional fund under "Additional settings", texts about adverts removed, the "not a forecast, not investment advice" warning kept at the top;

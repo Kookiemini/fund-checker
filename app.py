@@ -4,6 +4,9 @@
 
 Запуск:  python3 app.py   ->   открыть http://127.0.0.1:5000
 """
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from urllib.parse import urlencode
 
@@ -13,6 +16,58 @@ import core
 import data
 import make_evidence
 import rule
+
+# ---------- Скорость: загрузки помним 1 час и скачиваем параллельно ----------
+# Источники данных и офлайн-режим не меняются: это те же функции data.py, просто их ответ запоминается.
+# Ошибка загрузки не запоминается, поэтому запасной вариант с сохранённым файлом работает как раньше.
+
+CACHE_SECONDS = 60 * 60      # свежая загрузка используется повторно в течение часа
+DOWNLOAD_WORKERS = 4         # сколько тикеров скачивать одновременно
+_cache = {}
+_cache_lock = threading.Lock()
+
+
+def _remember(download_fn, key_fn):
+    """Обёртка над функцией загрузки: удачный ответ хранится в памяти CACHE_SECONDS секунд."""
+    def wrapper(*args):
+        key = key_fn(*args)
+        with _cache_lock:
+            hit = _cache.get(key)
+        if hit is not None and time.monotonic() - hit[0] < CACHE_SECONDS:
+            return hit[1].copy()
+        df = download_fn(*args)              # ошибка (DataError) уходит дальше и не запоминается
+        with _cache_lock:
+            _cache[key] = (time.monotonic(), df)
+        return df.copy()
+    wrapper.__wrapped__ = download_fn
+    return wrapper
+
+
+def enable_download_cache() -> None:
+    """Включается только при запуске сайта (python app.py), чтобы тесты всегда шли без памяти."""
+    data._download_prices = _remember(data._download_prices, lambda ticker: ("prices", ticker))
+    data._download_risk_free = _remember(data._download_risk_free, lambda: ("risk_free",))
+
+
+def load_prices_parallel(tickers, start: date, end: date) -> dict:
+    """data.get_prices для нескольких тикеров одновременно. Возвращает {тикер: (prices, info) или DataError}."""
+    def one(ticker):
+        try:
+            return ticker, data.get_prices(ticker, start, end)
+        except data.DataError as err:
+            return ticker, err
+    with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as pool:
+        return dict(pool.map(one, tickers))
+
+
+def warm_up() -> None:
+    """При запуске сайта заранее скачивает ставку FRED и цены всех фондов и бенчмарков (в фоне)."""
+    start, end = core.default_period(date.today())
+    try:
+        data.get_risk_free(start, end)
+    except data.DataError:
+        pass
+    load_prices_parallel(sorted(set(data.FUNDS) | set(BENCHMARKS)), start, end)
 
 app = Flask(__name__)
 
@@ -516,12 +571,17 @@ def pick_funds(target_pct: float, my_fund: str, benchmark: str, start: date, end
     link_params = {"benchmark": benchmark, "start": start.isoformat(), "end": end.isoformat(),
                    "advertised": f"{target_pct:g}"}
     rows, no_data, skipped, series = [], [], [], []
+    wanted = [f for f in data.FUNDS if not (f == benchmark and f != my_fund)]
+    loaded = load_prices_parallel(wanted, start, end)   # все фонды скачиваются одновременно
     for fund in data.FUNDS:
         if fund == benchmark and fund != my_fund:
             skipped.append(f"{fund} is the chosen benchmark, so it is not in the list.")
             continue
         try:
-            prices, info = data.get_prices(fund, start, end)
+            result = loaded[fund]
+            if isinstance(result, data.DataError):
+                raise result
+            prices, info = result
             series.append({"role": "Fund prices", "ticker": fund, **PRICE_SERIES, **info})
             # фонд не может быть своим бенчмарком: тогда подробной страницы нет и ссылки тоже
             link = None if fund == benchmark else try_link(dict(link_params, fund=fund))
@@ -683,4 +743,7 @@ def evidence_figure(name):
 
 
 if __name__ == "__main__":
+    enable_download_cache()
+    print("Preloading prices in the background: the first search will be fast in about a minute.")
+    threading.Thread(target=warm_up, daemon=True).start()
     app.run(host="127.0.0.1", port=5000, debug=False)
