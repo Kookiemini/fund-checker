@@ -12,3 +12,4 @@ Openings of the test period are appended automatically by `make_evidence.py --op
 - 2026-11-14 — Expected best-of-noise Sharpe (E7): Bailey and López de Prado (2014). — Who decided: Aiman. Check against the formula in the Week 11 slides.
 - 2026-11-14 — Before the test is opened the headline is the development sample (train + validation); after it is opened, the full window 2001-01 to 2026-10. Neighbours (E5) always on the development sample. — Who decided: Maksat.
 - 2026-11-14 — We already saw the development-period results (train + validation) on 2026-11-14, when we ran `python make_evidence.py` before writing R8; R8 was written after that, and the test period 2019-01 to 2026-10 has not been opened yet. — Who decided: Yersultan.
+- 2026-11-18: test period 2019-01 to 2026-10 opened (time #1) with `python make_evidence.py --open-test`. Rule v1, N = 10. Who decided: [Aiman, Maksat, Yersultan].

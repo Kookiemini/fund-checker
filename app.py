@@ -4,6 +4,8 @@
 
 Запуск:  python3 app.py   ->   открыть http://127.0.0.1:5000
 """
+import base64
+import math
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +16,7 @@ from flask import Flask, abort, render_template, request, send_from_directory
 
 import core
 import data
+import forecast
 import make_evidence
 import rule
 
@@ -740,6 +743,97 @@ def evidence_figure(name):
     if name not in {"equity.png", "drawdown.png", "neighbours.png"}:
         abort(404)
     return send_from_directory(make_evidence.EVIDENCE_DIR / "figures", name)
+
+
+# ---------- Forecast: сценарии на 3, 5 и 10 лет по истории (forecast.py) ----------
+# Здесь ничего не считается: загрузка через data.py, расчёт в forecast.py, тут только выбор и показ.
+
+FORECAST_RULE = "RULE_MA10"
+
+
+def forecast_assets() -> list:
+    return [rule.ASSET] + [f for f in data.FUNDS if f != rule.ASSET] + [FORECAST_RULE]
+
+
+def forecast_labels() -> dict:
+    labels = {rule.ASSET: BENCHMARK_LABELS.get(rule.ASSET, rule.ASSET)}
+    labels.update({f: f"{f}: {FUND_DESCRIPTIONS.get(f, '')}" for f in data.FUNDS})
+    labels[FORECAST_RULE] = (f"Rule MA{rule.PARAM_MAIN} on {rule.ASSET} (the Rule Lab rule, "
+                             f"net of {make_evidence.fmt_cost(rule.COST_DEFAULT)} per switch)")
+    return labels
+
+
+def read_forecast_form() -> dict:
+    return {"asset": request.args.get("asset", rule.ASSET),
+            "amount": request.args.get("amount", f"{forecast.AMOUNT_DEFAULT:.0f}")}
+
+
+def parse_forecast_form(form: dict):
+    """Проверяет форму Forecast. Возвращает (asset, amount) или бросает ValueError."""
+    if form["asset"] not in forecast_assets():
+        raise ValueError("Please choose a fund from the list.")
+    text = form["amount"].replace(" ", "").replace(",", "").replace("$", "")
+    try:
+        amount = float(text)
+    except ValueError:
+        raise ValueError(f"Enter the amount as a number from 1 to {forecast.AMOUNT_MAX:,.0f}, e.g. 1000.") from None
+    if not (1 <= amount <= forecast.AMOUNT_MAX) or math.isnan(amount):
+        raise ValueError(f"Enter the amount as a number from 1 to {forecast.AMOUNT_MAX:,.0f}, e.g. 1000.")
+    return form["asset"], amount
+
+
+def forecast_returns(asset: str, today: date):
+    """Месячные доходности для сценариев и сведения об источниках (те же функции data.py и rule.py)."""
+    start = date.fromisoformat(data.DOWNLOAD_START)
+    if asset == FORECAST_RULE:
+        prices, price_info = data.get_prices(rule.ASSET, start, today)
+        rates, rate_info = data.get_risk_free(start, today)
+        table = rule.backtest(rule.monthly_prices(prices[rule.ASSET]), rule.monthly_rate(rates.iloc[:, 0]),
+                              rule.PARAM_MAIN)
+        return rule.net_returns(table, rule.COST_DEFAULT), [price_info, rate_info]
+    prices, info = data.get_prices(asset, start, today)
+    return forecast.monthly_returns(prices[asset]), [info]
+
+
+def fmt_money(value: float) -> str:
+    return f"{value:,.0f} USD"
+
+
+@app.route("/forecast")
+def forecast_page():
+    form, result, error = read_forecast_form(), None, None
+    try:
+        asset, amount = parse_forecast_form(form)
+        returns, infos = forecast_returns(asset, date.today())
+        if len(returns) < forecast.MIN_MONTHS:
+            raise data.DataError(f"Too little history for {asset}: {len(returns)} months "
+                                 f"(at least {forecast.MIN_MONTHS} are needed for scenarios).")
+        growth = forecast.simulate(returns, max(forecast.HORIZONS) * 12)
+        rows = forecast.summarize(growth, amount)
+        label = forecast_labels()[asset]
+        chart = base64.b64encode(forecast.fan_chart_png(
+            growth, amount, f"{fmt_money(amount)} in {asset if asset != FORECAST_RULE else 'Rule MA10'}: "
+                            f"scenarios for the next {max(forecast.HORIZONS)} years")).decode("ascii")
+        result = {
+            "asset": asset, "label": label, "amount": fmt_money(amount),
+            "rows": [dict(r, money={p: fmt_money(v) for p, v in r["values"].items()},
+                          median_per_year_text=make_evidence.fmt_pct(r["median_per_year"]),
+                          loss_text=make_evidence.fmt_pct(r["loss_chance"], 0),
+                          half_loss_text=make_evidence.fmt_pct(r["half_loss_chance"], 0)) for r in rows],
+            "history": forecast.history_summary(returns),
+            "chart": chart,
+            "sources": infos,
+            "is_rule": asset == FORECAST_RULE,
+            "offline_messages": [i["message"] for i in infos if i["offline"]],
+        }
+    except (ValueError, data.DataError) as err:
+        error = str(err)
+    except Exception as err:  # непредвиденная ошибка: без traceback на экране
+        app.logger.error("Unexpected error: %s", type(err).__name__)
+        error = "Something unexpected went wrong while calculating the scenarios. Please try again."
+    return render_template("forecast.html", form=form, assets=forecast_assets(), labels=forecast_labels(),
+                           result=result, error=error, forecast=forecast, rule=rule,
+                           pct=make_evidence.fmt_pct, cost=make_evidence.fmt_cost)
 
 
 if __name__ == "__main__":
