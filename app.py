@@ -4,6 +4,8 @@
 
 Запуск:  python3 app.py   ->   открыть http://127.0.0.1:5000
 """
+import csv
+import io
 import math
 import threading
 import time
@@ -11,11 +13,13 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from urllib.parse import urlencode
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
+import pandas as pd
 from markupsafe import escape
 
 import core
 import data
+import extras
 import forecast
 import make_evidence
 import rule
@@ -50,6 +54,7 @@ def enable_download_cache() -> None:
     """Включается только при запуске сайта (python app.py), чтобы тесты всегда шли без памяти."""
     data._download_prices = _remember(data._download_prices, lambda ticker: ("prices", ticker))
     data._download_risk_free = _remember(data._download_risk_free, lambda: ("risk_free",))
+    data._download_cpi = _remember(data._download_cpi, lambda: ("cpi",))
 
 
 def load_prices_parallel(tickers, start: date, end: date) -> dict:
@@ -66,10 +71,11 @@ def load_prices_parallel(tickers, start: date, end: date) -> dict:
 def warm_up() -> None:
     """При запуске сайта заранее скачивает ставку FRED и цены всех фондов и бенчмарков (в фоне)."""
     start, end = core.default_period(date.today())
-    try:
-        data.get_risk_free(start, end)
-    except data.DataError:
-        pass
+    for load in (data.get_risk_free, data.get_cpi):
+        try:
+            load(start, end)
+        except data.DataError:
+            pass
     load_prices_parallel(sorted(set(data.FUNDS) | set(BENCHMARKS)), start, end)
 
 app = Flask(__name__)
@@ -458,6 +464,9 @@ TARGET_ERROR = "Enter a number from 0 to {max:.0f} (% per year), e.g. 12."
 # Описание рядов для панели Honesty: те же подписи, что в data.get_dataset
 PRICE_SERIES = {"source": "Yahoo Finance (yfinance)", "field": "Adjusted Close (Close with auto_adjust=True)",
                 "currency": "USD", "frequency": "daily", "adjusted": True}
+CPI_SERIES_INFO = {"ticker": data.CPI_SERIES, "role": "Inflation", "source": "FRED, St. Louis Fed (API)",
+                   "field": "Consumer Price Index for All Urban Consumers (CPI-U)", "currency": "index",
+                   "frequency": "monthly", "adjusted": None}
 RF_SERIES_INFO = {"ticker": data.RF_SERIES, "role": "Risk-free rate", "source": "FRED, St. Louis Fed (API)",
                   "field": "3-Month Treasury constant maturity rate", "currency": "percent per year (USD)",
                   "frequency": "daily", "adjusted": None}
@@ -565,7 +574,54 @@ def fund_row(fund: str, prices, info: dict, risk_free, target: float, target_tex
         "used": (first.date(), last.date()),
         "volatility_value": volatility,
         "max_drawdown": fmt_pct(worst_fall),
+        "max_drawdown_value": worst_fall,
+        "sharpe_value": sharpe,
+        "fee": extras.expense_ratio(fund),
     }
+
+
+def load_inflation():
+    """Индекс цен CPI за всю историю (data.py, тот же офлайн-режим). Ошибка не ломает страницу."""
+    try:
+        cpi, info = data.get_cpi(date.fromisoformat(data.DOWNLOAD_START), date.today())
+        return cpi.iloc[:, 0], info, None
+    except data.DataError as err:
+        return None, None, str(err)
+
+
+def add_inflation(rows: list, cpi, cpi_info, cpi_error) -> dict:
+    """Добавляет к каждому фонду доходность после инфляции за его же даты. Возвращает сведения для экрана."""
+    if cpi is None:
+        for r in rows:
+            r["real"], r["real_value"] = "-", None
+        return {"ok": False, "error": cpi_error}
+    rates = []
+    for r in rows:
+        found = extras.yearly_inflation(cpi, *r["used"])
+        if found is None:
+            r["real"], r["real_value"] = "-", None
+            continue
+        rate, d0, d1 = found
+        r["real_value"] = extras.real_return(r["cagr_value"], rate)
+        r["real"] = fmt_pct(r["real_value"])
+        r["inflation"] = fmt_pct(rate)
+        r["explain"].append(f"After inflation: US prices (CPI) rose {fmt_pct(rate)} a year from {d0:%Y-%m} to {d1:%Y-%m}, "
+                            f"so (1 + {r['cagr']}) / (1 + {fmt_pct(rate)}) - 1 = {r['real']} a year in real money.")
+        rates.append((rate, d0, d1))
+    if not rates:
+        return {"ok": False, "error": "Not enough inflation data for this period."}
+    rate, d0, d1 = rates[0]
+    return {"ok": True, "rate": fmt_pct(rate), "from": f"{d0:%Y-%m}", "to": f"{d1:%Y-%m}",
+            "pull_date": str(cpi_info["pull_date"]), "offline": cpi_info["offline"]}
+
+
+def long_inflation():
+    """Средняя инфляция в год за всю историю CPI с 2000 года (для сумм "в сегодняшних деньгах")."""
+    cpi, _, _ = load_inflation()
+    if cpi is None:
+        return None
+    found = extras.yearly_inflation(cpi, cpi.index[0], cpi.index[-1])
+    return None if found is None else {"rate": found[0], "from": f"{found[1]:%Y-%m}", "to": f"{found[2]:%Y-%m}"}
 
 
 def pick_funds(target_pct: float, my_fund: str, benchmark: str, start: date, end: date) -> dict:
@@ -596,6 +652,9 @@ def pick_funds(target_pct: float, my_fund: str, benchmark: str, start: date, end
             no_data.append({"fund": fund, "description": FUND_DESCRIPTIONS.get(fund, ""),
                             "text": no_data_text(err, end)})
 
+    cpi, cpi_info, cpi_error = load_inflation()
+    inflation = add_inflation(rows, cpi, cpi_info, cpi_error)
+
     selected = None
     if my_fund != NO_FUND:
         row = next((r for r in rows if r["fund"] == my_fund), None)
@@ -616,7 +675,7 @@ def pick_funds(target_pct: float, my_fund: str, benchmark: str, start: date, end
     matches = sorted((r for r in others if r["meets"]), key=lambda r: r["cagr_value"])  # ближе к цели - выше
     best = max(others, key=lambda r: r["cagr_value"]) if others else None
     shown = ([selected] if selected and not selected.get("no_data") else []) + matches
-    infos = [s for s in series] + [rf_info]
+    infos = [s for s in series] + [rf_info] + ([cpi_info] if cpi_info else [])
 
     return {
         "target": target_text,
@@ -627,6 +686,7 @@ def pick_funds(target_pct: float, my_fund: str, benchmark: str, start: date, end
         "matches": matches,
         "best": best,
         "all_rows": rows,
+        "inflation": inflation,
         "no_data": [n for n in no_data if n["fund"] != my_fund],
         "skipped": skipped,
         "deep": {
@@ -641,7 +701,7 @@ def pick_funds(target_pct: float, my_fund: str, benchmark: str, start: date, end
             "warning": PICK_DEEP_WARNING,
         },
         "honesty": {
-            "series": series + [{**RF_SERIES_INFO, **rf_info}],
+            "series": series + [{**RF_SERIES_INFO, **rf_info}] + ([{**CPI_SERIES_INFO, **cpi_info}] if cpi_info else []),
             "price_source": "Yahoo Finance (yfinance), column Adjusted Close (auto_adjust=True)",
             "rate_source": "FRED API, series DGS3MO (3-Month Treasury, % per year)",
             "requested_start": start, "requested_end": end,
@@ -805,7 +865,7 @@ def forecast_block(assets: list, pct: float, amount: float, add: float, today: d
                       "label": labels.get(asset, asset), "history": forecast.history_summary(returns),
                       "sources": [{k: str(i[k]) for k in ("file", "pull_date", "offline", "message")} for i in infos],
                       **sc})
-    return {"pct": pct, "amount": amount, "add": add, "items": items, "errors": errors,
+    return {"pct": pct, "amount": amount, "add": add, "items": items, "errors": errors, "inflation": long_inflation(),
             "horizons": forecast.HORIZONS, "paths": forecast.PATHS, "block": forecast.BLOCK, "seed": forecast.SEED}
 
 
@@ -819,6 +879,7 @@ def summary_block(pick: dict, fc: dict, pct: float) -> dict:
     summary = None
     if best is not None:
         summary = {"fund": best["fund"], "description": best["description"], "cagr": best["cagr"],
+                   "real": best.get("real", "-"),
                    "chance5": chance5.get(best["fund"]), "max_drawdown": best["max_drawdown"]}
     warning = None
     all_rows = pick["all_rows"]
@@ -883,6 +944,103 @@ def api_fund():
         return f'<div class="error">{escape(str(err))}</div>', 200
 
 
+@app.route("/api/plan")
+def api_plan():
+    """Сколько докладывать в месяц, чтобы дойти до цели за N лет (для выбранной строки Forecast)."""
+    try:
+        asset = request.args.get("asset", "")
+        if asset not in forecast_assets():
+            raise ValueError("Please choose a fund from the list.")
+        pct = core.parse_advertised_pct(request.args.get("target", "0"))
+        amount = parse_money(request.args.get("amount", ""), 0, forecast.AMOUNT_MAX, "amount")
+        goal = parse_money(request.args.get("goal", ""), 1, extras.GOAL_MAX, "goal")
+        years = request.args.get("years", "")
+        if not years.isdigit() or not (1 <= int(years) <= extras.YEARS_MAX):
+            raise ValueError(f"Enter the number of years from 1 to {extras.YEARS_MAX}, e.g. 10.")
+        returns, _ = forecast_returns(asset, date.today())
+        if len(returns) < forecast.MIN_MONTHS:
+            raise data.DataError(f"{asset}: too little history ({len(returns)} months).")
+        plan = extras.required_add(returns, amount, goal, int(years), pct)
+        plan["asset"] = "Rule MA10" if asset == FORECAST_RULE else asset
+        infl = long_inflation()
+        plan["goal_today"] = None if infl is None else extras.todays_money(goal, infl["rate"], int(years))
+        return jsonify(plan)
+    except (ValueError, data.DataError) as err:
+        return jsonify({"error": str(err)}), 400
+
+
+MIX_CHOICES = sorted(set(data.FUNDS) | set(BENCHMARKS))
+MIX_LABELS = {c: FUND_DESCRIPTIONS.get(c) or BENCHMARK_LABELS.get(c, c).split(": ", 1)[-1] for c in MIX_CHOICES}
+
+
+@app.route("/api/mix")
+def api_mix():
+    """Смесь 2-3 фондов с ребалансировкой раз в месяц против каждого фонда отдельно."""
+    try:
+        weights = extras.parse_mix(request.args.get("funds", ""), request.args.get("weights", ""), MIX_CHOICES)
+        start, end = date.fromisoformat(request.args["start"]), date.fromisoformat(request.args["end"])
+        core.validate_period(start, end, date.today(), min_date=date.fromisoformat(data.DOWNLOAD_START))
+        loaded = load_prices_parallel(list(weights), start, end)
+        for ticker, result in loaded.items():
+            if isinstance(result, data.DataError):
+                raise data.DataError(f"{ticker}: {result}")
+        prices = pd.concat([loaded[t][0][t] for t in weights], axis=1, join="inner").dropna()
+        if len(prices) < data.MIN_COMMON_DAYS:
+            raise data.DataError("These funds have too few common trading days in this period. Choose a longer period.")
+        rates, _ = data.get_risk_free(start, end)
+        rf = core.risk_free_annual(rates.loc[prices.index[0]:prices.index[-1]].iloc[:, 0])
+        result = extras.mix(prices, weights, rf)
+        result["weights"] = weights
+        result["offline"] = [loaded[t][1]["message"] for t in weights if loaded[t][1]["offline"]]
+        return jsonify(result)
+    except (KeyError, ValueError, data.DataError) as err:
+        return jsonify({"error": str(err)}), 400
+
+
+def csv_number(value, digits=2):
+    return "" if value is None else f"{value * 100:.{digits}f}"
+
+
+@app.route("/download.csv")
+def download_csv():
+    """Список фондов и прогноз в файле CSV (открывается в Excel и Google Sheets)."""
+    form = read_one_form()
+    try:
+        target_pct, my_fund, benchmark, start, end = parse_pick_form(form)
+        amount = parse_money(form["amount"], 1, forecast.AMOUNT_MAX, "amount")
+        add = parse_money(form["add"], 0, ADD_MAX, "monthly top-up")
+        pick = pick_funds(target_pct, my_fund, benchmark, start, end)
+        fc = forecast_block([r["fund"] for r in pick["all_rows"]], target_pct, amount, add, date.today())
+    except (ValueError, data.DataError) as err:
+        return Response(f"Error: {err}\n", status=400, mimetype="text/plain")
+    chances = {i["asset"]: {r["years"]: r for r in i["rows"]} for i in fc["items"]}
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["Fund Finder export", f"created {date.today()}", "Historical data. Not a promise. Not investment advice."])
+    w.writerow(["Desired return, % per year", f"{target_pct:g}", "Amount, USD", f"{amount:.0f}",
+                "Add every month, USD", f"{add:.0f}", "Period", pick["period"]])
+    infl = pick["inflation"]
+    w.writerow(["Inflation (CPI) per year in the period", infl["rate"] if infl["ok"] else "not available"])
+    w.writerow([])
+    head = ["Fund", "Description", "In the list", "Return per year, %", "After inflation, %", "Volatility, %",
+            "Sharpe", "Worst fall, %", "Fee per year, %"]
+    for y in forecast.HORIZONS:
+        head += [f"Chance to keep {target_pct:g}%/yr for {y} years, %", f"Typical value in {y} years, USD"]
+    w.writerow(head)
+    for r in sorted(pick["all_rows"], key=lambda r: -r["cagr_value"]):
+        row = [r["fund"], r["description"], "yes" if r["meets"] else "no", csv_number(r["cagr_value"]),
+               csv_number(r.get("real_value")), csv_number(r["volatility_value"]),
+               "" if r["sharpe_value"] is None else f"{r['sharpe_value']:.2f}", csv_number(r["max_drawdown_value"]),
+               "" if r["fee"] is None else f"{r['fee']:g}"]
+        for y in forecast.HORIZONS:
+            c = chances.get(r["fund"], {}).get(y)
+            row += ["", ""] if c is None else [f"{c['chance_target'] * 100:.0f}", f"{c['values'][50]:.0f}"]
+        w.writerow(row)
+    name = f"fund-finder-{date.today()}.csv"
+    return Response("\ufeff" + out.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={name}"})
+
+
 def one_page():
     form = read_one_form()
     pick = fc = top = None
@@ -911,7 +1069,9 @@ def one_page():
         ev=evidence, ev_error=evidence_error, rule=rule, cost_keys=[make_evidence.cost_key(c) for c in rule.COSTS],
         costs=rule.COSTS, cost_key=make_evidence.cost_key, team_verdict=team_verdict(),
         default_cost=make_evidence.cost_key(rule.COST_DEFAULT), forecast=forecast, benchmarks=BENCHMARKS,
-        benchmark_labels=BENCHMARK_LABELS, default_benchmark=data.DEFAULT_BENCHMARK, deep_general=PICK_DEEP_GENERAL)
+        benchmark_labels=BENCHMARK_LABELS, default_benchmark=data.DEFAULT_BENCHMARK, deep_general=PICK_DEEP_GENERAL,
+        mix_choices=MIX_CHOICES, mix_labels=MIX_LABELS, fees=extras.EXPENSE_RATIOS, fees_checked=extras.EXPENSE_RATIOS_CHECKED,
+        years_max=extras.YEARS_MAX, query=request.query_string.decode("utf-8", "replace"))
 
 
 if __name__ == "__main__":

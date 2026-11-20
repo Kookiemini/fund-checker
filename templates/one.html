@@ -58,7 +58,8 @@
     <div class="summary" id="summary">
       {% if top.summary %}{% set s = top.summary %}
         <div class="best">Best match<b>{{ s.fund }}</b><span>{{ s.description }}</span></div>
-        <div class="st"><small>Return per year in the period</small><b class="pos">{{ s.cagr }}</b></div>
+        <div class="st"><small>Return per year in the period</small><b class="pos">{{ s.cagr }}</b>
+          {% if s.real != "-" %}<small class="sub2">after inflation: {{ s.real }}</small>{% endif %}</div>
         <div class="st"><small>Chance to keep {{ result.target }}/yr for 5 years</small><b id="sum-chance" data-asset="{{ s.fund }}">{% if s.chance5 is not none %}{{ "%.0f" % (s.chance5 * 100) }}%{% else %}-{% endif %}</b></div>
         <div class="st"><small>Worst fall in the period</small><b class="neg">{{ s.max_drawdown }}</b></div>
       {% else %}
@@ -75,7 +76,8 @@
         <div class="desc">{{ sel.description }}</div>
         <p class="status">{{ sel.status }}</p>
         {% if not sel.no_data %}<div class="nums"><div>Return per year: <b>{{ sel.cagr }}</b></div><div>Volatility: <b>{{ sel.volatility }}</b></div>
-          <div>Sharpe ratio: <b>{{ sel.sharpe }}</b></div><div>Worst fall: <b>{{ sel.max_drawdown }}</b></div></div>
+          <div>Sharpe ratio: <b>{{ sel.sharpe }}</b></div><div>Worst fall: <b>{{ sel.max_drawdown }}</b></div>
+          <div>After inflation: <b>{{ sel.real }}</b></div><div>Fund fee: <b>{% if sel.fee is not none %}{{ "%.2f" % sel.fee }}% a year{% else %}-{% endif %}</b></div></div>
           {% if sel.first_date %}<span class="short-note">Data only from {{ sel.first_date }}; the calculation starts on that date.</span>{% endif %}
           <details class="inner" id="selected-detail" data-lazy><summary>Full check of {{ sel.fund }}</summary><div class="body">
             <div class="loader" data-src="/api/fund?fund={{ sel.fund }}&start={{ result.used_start }}&end={{ result.used_end }}&target={{ form.target }}"></div>
@@ -93,13 +95,14 @@
       <div class="body">
         {% if result.matches %}
         <table id="matches">
-          <tr><th>Fund</th><th>Return / year<br><small>CAGR</small></th><th>Swings<br><small>volatility</small></th><th>Return for risk<br><small>Sharpe</small></th></tr>
+          <tr><th>Fund</th><th>Return / year<br><small>CAGR</small></th><th>After inflation<br><small>real return / year</small></th><th>Swings<br><small>volatility</small></th><th>Return for risk<br><small>Sharpe</small></th><th>Fund fee<br><small>per year</small></th></tr>
           {% for r in result.matches %}
           <tr class="fund" data-fund="{{ r.fund }}"><td><a href="#fund-{{ r.fund }}">{{ r.fund }}</a>
               <span class="desc">{{ r.description }}</span>
               {% if r.first_date %}<span class="short-note">Data only from {{ r.first_date }}; the calculation starts on that date.</span>{% endif %}</td>
-            <td class="pos">{{ r.cagr }}</td><td>{{ r.volatility }}</td><td>{{ r.sharpe }}</td></tr>
-          <tr class="detail" id="fund-{{ r.fund }}" hidden><td colspan="4">
+            <td class="pos">{{ r.cagr }}</td><td>{{ r.real }}</td><td>{{ r.volatility }}</td><td>{{ r.sharpe }}</td>
+            <td>{% if r.fee is not none %}{{ "%.2f" % r.fee }}%{% else %}-{% endif %}</td></tr>
+          <tr class="detail" id="fund-{{ r.fund }}" hidden><td colspan="6">
             <div class="loader" data-src="/api/fund?fund={{ r.fund }}&start={{ result.used_start }}&end={{ result.used_end }}&target={{ form.target }}"></div>
             <details class="inner"><summary>🔍 Deep analysis for {{ r.fund }}: where each number comes from</summary>
               <div class="body"><ul class="note">{% for line in r.explain %}<li>{{ line }}</li>{% endfor %}</ul></div></details>
@@ -110,6 +113,11 @@
           <div class="empty"><b>No {% if sel %}other {% endif %}fund in our list gave {{ result.target }} a year or more in this period ({{ result.period }}).</b>
             Try a lower number{% if result.best %}: the best result was {{ result.best.cagr }} a year ({{ result.best.fund }}){% endif %}.</div>
         {% endif %}
+        {% set inf = result.inflation %}
+        <p class="note" style="margin-top:10px">{% if inf.ok %}<b>After inflation:</b> US prices rose about {{ inf.rate }} a year in this period (FRED CPI, {{ inf.from }} to {{ inf.to }}), so the real growth of your money is lower than the return.
+          {% else %}<b>After inflation:</b> not available right now ({{ inf.error }}).{% endif %}
+          <b>Fund fee</b> (expense ratio, checked {{ fees_checked }}) is already taken out of the fund price, so all returns above are after the fee.</p>
+        <p style="margin-top:10px"><a class="btn2" id="csv-link" href="/download.csv?{{ query }}" download>⬇ Download the table and forecast (CSV)</a></p>
         {% for note in result.skipped %}<p class="note">{{ note }}</p>{% endfor %}
         {% if result.no_data %}
         <section>
@@ -134,11 +142,41 @@
         <p class="note">Built from each fund's real monthly history, replayed {{ "{:,}".format(fc.paths) }} times in blocks of {{ fc.block }} months
           (seed {{ fc.seed }}). "At your %" means growing exactly that much every year with the same top-ups. Not a promise.</p>
         <p class="fc-err" id="fc-errors"></p>
+        <div class="planner" id="planner">
+          <h4>🎯 How much to add every month?</h4>
+          <p class="note">Set a goal and the site works out the monthly top-up for the fund chosen in the table above (with your starting amount).</p>
+          <div class="row">
+            <div class="field"><label for="goal">Goal, USD</label><input id="goal" type="text" inputmode="decimal" value="{{ '{:.0f}'.format([fc.amount * 10, 10000] | max) }}" autocomplete="off"></div>
+            <div class="field"><label for="years">In years</label><input id="years" type="number" min="1" max="{{ years_max }}" step="1" value="10"></div>
+          </div>
+          <div id="plan-out" class="plan-out"></div>
+        </div>
         <script type="application/json" id="fc-data">{{ fc | tojson }}</script>
       </div>
     </details>
     {% endif %}
   {% endif %}
+
+  <!-- Mix of funds -->
+  <details class="sec" id="mix">
+    <summary><span class="ic">🧩</span><span class="t"><b>Mix funds: does a mix fall less?</b>
+      <small>put 2 or 3 funds together and compare the mix with each fund alone, same dates</small></span><span class="arrow">›</span></summary>
+    <div class="body">
+      <form id="mix-form" class="mix-form" data-start="{{ form.start }}" data-end="{{ form.end }}">
+        {% set defaults = [("SPY", 60), ("TLT", 40), ("", "")] %}
+        {% for f, wgt in defaults %}
+        <div class="mix-row">
+          <select class="mix-fund"><option value="">{% if loop.index == 3 %}(no third fund){% else %}choose a fund{% endif %}</option>
+            {% for c in mix_choices %}<option value="{{ c }}" {% if c == f %}selected{% endif %}>{{ c }}: {{ mix_labels[c] }}</option>{% endfor %}</select>
+          <input class="mix-w" type="number" min="1" max="100" step="any" value="{{ wgt }}" placeholder="%"><span>%</span>
+        </div>
+        {% endfor %}
+        <button class="btn" type="submit">Compare</button>
+        <p class="note">Period: {{ form.start }} to {{ form.end }} (change it in Additional settings). The mix goes back to your shares at the start of every month.</p>
+      </form>
+      <div id="mix-out"></div>
+    </div>
+  </details>
 
   <!-- 3. Rule Lab (Assignment 2): all numbers from evidence/evidence.json -->
   {% if ev %}{% set m = ev.meta %}{% set d = ev.e2[default_cost] %}
@@ -223,6 +261,8 @@
           {% if result %}{% for p in result.deep.general %}<li>{{ p }}</li>{% endfor %}{% else %}{% for p in deep_general %}<li>{{ p }}</li>{% endfor %}{% endif %}
           <li><b>Forecast:</b> {{ "{:,}".format(forecast.PATHS) }} futures are rebuilt from blocks of {{ forecast.BLOCK }} real months in a row (circular block bootstrap, seed {{ forecast.SEED }}).
             The chance to get your % is the share of futures that ended at least where steady growth at your % (with the same top-ups) would end.</li>
+          <li><b>How much to add:</b> for each of the {{ "{:,}".format(forecast.PATHS) }} futures the site finds the exact monthly top-up that reaches the goal; "50% chance" is the middle of these numbers, "90% chance" is enough in 9 futures out of 10.</li>
+          <li><b>Mix of funds:</b> daily returns of each fund; at the start of every month the mix goes back to the chosen shares. Return, volatility, Sharpe and worst fall use the same formulas as the fund list.</li>
           <li><b>Rule Lab:</b> monthly returns of SPY and cash at the 3-month Treasury rate; the position in a month is the signal of the month before, so the rule never uses future prices.</li>
         </ul>
         {% if result and result.deep.why %}<h4 style="margin:14px 0 6px;color:var(--accent)">Why a fund is in the list or not</h4>
@@ -251,7 +291,9 @@
             {{ ev.e7.configurations }} configurations looked at ({{ ev.e7.lines }} lines in trials.csv); test period {% if ev.meta.test_opened %}opened {{ ev.meta.test_opened | length }} time(s) ({{ ev.meta.test_opened | join(', ') }}){% else %}not opened yet{% endif %};
             evidence generated by make_evidence.py on {{ ev.meta.generated }}.</li>{% endif %}
           <li><b>Survivorship:</b> the funds offered here exist today; funds that closed in the past are not in the list.</li>
-          <li><b>Not included:</b> inflation, taxes, broker fees.</li>
+          <li><b>Inflation:</b> FRED, series CPIAUCSL (US consumer prices, monthly). "After inflation" = (1 + return) / (1 + inflation) - 1 over the same dates.</li>
+          <li><b>Fund fees:</b> expense ratios from the fund providers' public pages, checked {{ fees_checked }}. They are already inside the Adjusted Close price, so they are shown for information and are not taken off a second time.</li>
+          <li><b>Not included:</b> taxes, broker fees.</li>
           <li><b>Offline mode:</b> if the internet or a data source is not available, the site uses the latest saved files from data/raw/ and says so at the top.</li>
         </ul>
       </div>

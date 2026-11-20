@@ -35,6 +35,7 @@ DOWNLOAD_START = "2000-01-01"
 
 FRED_URL = "https://api.stlouisfed.org/fred/series/observations"
 RF_SERIES = "DGS3MO"  # 3-Month Treasury, значения в ПРОЦЕНТАХ годовых
+CPI_SERIES = "CPIAUCSL"  # индекс потребительских цен США (инфляция), месячный
 
 # Список для выбора на экране. Многие тикеры появились позже 2000 года: тогда окно данных
 # начинается с их первой даты, и приложение говорит об этом (info["warnings"]).
@@ -191,7 +192,17 @@ def _download_prices(ticker: str) -> pd.DataFrame:
 
 
 def _download_risk_free() -> pd.DataFrame:
-    """Скачивает ставку DGS3MO с FRED. Значения остаются в процентах (как на сайте FRED).
+    """Скачивает ставку DGS3MO с FRED. Значения остаются в процентах (как на сайте FRED)."""
+    return _download_fred(RF_SERIES)
+
+
+def _download_cpi() -> pd.DataFrame:
+    """Скачивает индекс потребительских цен CPIAUCSL с FRED (месячный, для доходности после инфляции)."""
+    return _download_fred(CPI_SERIES)
+
+
+def _download_fred(series_id: str) -> pd.DataFrame:
+    """Скачивает один ряд FRED (тот же запрос и те же ошибки, что раньше были у ставки DGS3MO).
 
     Тексты ошибок строим сами и НЕ берём str(исключения): в адресе запроса есть api_key,
     и он мог бы попасть на экран.
@@ -200,7 +211,7 @@ def _download_risk_free() -> pd.DataFrame:
     if not api_key or api_key == "your_fred_api_key_here":
         raise MissingKeyError("FRED_API_KEY is not set in the .env file.")
     params = {
-        "series_id": RF_SERIES,
+        "series_id": series_id,
         "api_key": api_key,
         "file_type": "json",
         "observation_start": DOWNLOAD_START,
@@ -231,9 +242,9 @@ def _download_risk_free() -> pd.DataFrame:
     df = df.dropna()
     df["date"] = pd.to_datetime(df["date"])
     df = df.set_index("date")
-    df.columns = [RF_SERIES]
+    df.columns = [series_id]
     if df.empty:
-        raise ApiError("FRED returned no data for DGS3MO.")
+        raise ApiError(f"FRED returned no data for {series_id}.")
     return df
 
 
@@ -330,6 +341,11 @@ def get_risk_free(start: date, end: date):
     """Risk-free rate (в процентах годовых) за период. Возвращает (таблица, info)."""
     return _load_with_fallback(f"rf_{RF_SERIES}", f"Risk-free rate {RF_SERIES}",
                                _download_risk_free, start, end)
+
+
+def get_cpi(start: date, end: date):
+    """Индекс потребительских цен CPIAUCSL за период. Возвращает (таблица, info). Тот же офлайн-режим."""
+    return _load_with_fallback(f"cpi_{CPI_SERIES}", f"Inflation index {CPI_SERIES}", _download_cpi, start, end)
 
 
 # ---------- Главная функция ----------

@@ -124,6 +124,7 @@ function forecastRender() {
       <div class="line">Put in <b>${money(r.put_in)} USD</b></div>
       <div class="line">At your ${pct}%/yr <b>${money(r.target)} USD</b></div>
       <div class="line">Bad · Good <b>${money(r.values[5])} · ${money(r.values[95])}</b></div>
+      ${d.inflation ? `<div class="line">Middle in today's money <b>≈ ${money(r.values[50] / Math.pow(1 + d.inflation.rate, r.years))} USD</b></div>` : ""}
       <div class="line">Chance to end below what you put in <b>${pctText(r.loss_chance)}</b></div>
       <div class="line">Chance to reach ${pct}%/yr <b>${pctText(r.chance_target)}</b></div>
       <div class="meter"><i style="width:${Math.round(r.chance_target * 100)}%"></i></div></div>`).join("");
@@ -140,6 +141,68 @@ function forecastRender() {
   const best = $("#sum-chance"); if (best) { const it = d.items.find(i => i.asset === best.dataset.asset);
     if (it) best.textContent = pctText(it.rows.find(r => r.years === 5).chance_target); }
   $("#fc-errors").textContent = d.errors && d.errors.length ? "Not included: " + d.errors.join("; ") : "";
+  planRefresh();
+}
+
+// ---------- How much to add every month? ----------
+const PLAN = { timer: null, seq: 0 };
+function planRefresh() {
+  const out = $("#plan-out"), d = FC.data; if (!out || !d || !FC.selected) return;
+  clearTimeout(PLAN.timer);
+  PLAN.timer = setTimeout(() => {
+    const params = new URLSearchParams({asset: FC.selected, target: d.pct, amount: d.amount,
+                                        goal: $("#goal").value, years: $("#years").value});
+    const seq = ++PLAN.seq; out.classList.add("updating");
+    fetch("/api/plan?" + params).then(r => r.json()).then(j => {
+      if (seq !== PLAN.seq) return; out.classList.remove("updating");
+      if (j.error) { out.innerHTML = `<div class="fc-err">${j.error}</div>`; return; }
+      const a = j.adds, months = j.years * 12;
+      const cell = (k, label) => `<div class="pcard"><small>${label}</small><b>${money(a[k])} USD</b><span>a month · you put in ${money(j.amount + a[k] * months)} USD</span></div>`;
+      out.innerHTML = `<p>To have <b>${money(j.goal)} USD</b> in <b>${j.years} years</b> with <b>${j.asset}</b>, starting with ${money(j.amount)} USD:</p>
+        <div class="pcards">${cell("50", "50% chance")}${cell("75", "75% chance")}${cell("90", "90% chance")}</div>
+        <p class="note">If the money grew exactly ${d.pct}% every year you would need ${money(j.steady)} USD a month.
+          ${j.chance_without > 0 ? `Without any top-ups the chance is ${pctText(j.chance_without)}.` : ""}
+          ${j.goal_today ? `${money(j.goal)} USD in ${j.years} years is worth about ${money(j.goal_today)} USD of today's money.` : ""}</p>`;
+    }).catch(() => out.classList.remove("updating"));
+  }, 350);
+}
+
+// keep the CSV link in step with the amount and top-up typed at the top
+function csvLinkUpdate() {
+  const link = $("#csv-link"); if (!link) return;
+  const url = new URL(link.href, location.href);
+  url.searchParams.set("amount", $("#amt").value); url.searchParams.set("add", $("#add").value);
+  link.href = url.pathname + url.search;
+}
+
+// ---------- Mix of funds ----------
+const MIX_COLORS = ["#fbbf24", "#7aa7ff", "#a78bfa", "#4ade80"];
+function initMix() {
+  const form = $("#mix-form"); if (!form) return;
+  form.addEventListener("submit", ev => {
+    ev.preventDefault();
+    const rows = $$(".mix-row", form).map(r => [$(".mix-fund", r).value, $(".mix-w", r).value]).filter(r => r[0] || r[1]);
+    const params = new URLSearchParams({funds: rows.map(r => r[0]).join(","), weights: rows.map(r => r[1]).join(","),
+                                        start: form.dataset.start, end: form.dataset.end});
+    const out = $("#mix-out"); out.classList.add("updating");
+    fetch("/api/mix?" + params).then(r => r.json()).then(j => {
+      out.classList.remove("updating");
+      if (j.error) { out.innerHTML = `<div class="error">${j.error}</div>`; return; }
+      const name = Object.entries(j.weights).map(([f, w]) => `${w}% ${f}`).join(" + ");
+      const pct = v => v === null || v === undefined ? "-" : pctText(v, 2);
+      const row = (label, s, cls) => `<tr class="${cls || ""}"><td><b>${label}</b></td><td>${pct(s.cagr)}</td><td>${pct(s.volatility)}</td>
+        <td>${s.sharpe === null ? "-" : s.sharpe.toFixed(2)}</td><td class="neg">${pct(s.max_drawdown)}</td><td>${s.fee === null ? "-" : s.fee.toFixed(2) + "%"}</td></tr>`;
+      out.innerHTML = `${j.offline.length ? `<div class="offline">${j.offline.join("<br>")}</div>` : ""}
+        <div class="table-wrap"><table><tr><th></th><th>Return / year</th><th>Swings</th><th>Sharpe</th><th>Worst fall</th><th>Fee / year</th></tr>
+        ${row("Mix: " + name, j.mix, "mixrow")}${Object.entries(j.funds).map(([f, s]) => row(f + " alone", s)).join("")}</table></div>
+        <div id="mix-chart" style="margin-top:12px"></div>
+        <p class="note">${j.first} to ${j.last}, ${j.days} trading days in common. Growth of 100 USD at the end of each month. Fees are already inside the prices.</p>`;
+      const names = Object.keys(j.chart.series);
+      lineChart($("#mix-chart"), { x: j.chart.dates, fmt: v => money(v) + " $",
+        series: names.map((n, i) => ({name: n === "Mix" ? "Mix: " + name : n, color: MIX_COLORS[i % MIX_COLORS.length],
+                                      y: j.chart.series[n], width: n === "Mix" ? 2.8 : 1.6})) });
+    }).catch(() => { out.classList.remove("updating"); out.innerHTML = '<div class="error">The mix could not be calculated. Please try again.</div>'; });
+  });
 }
 
 function forecastRefresh() {
@@ -218,8 +281,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const raw = $("#fc-data");
   if (raw) { FC.data = JSON.parse(raw.textContent); FC.selected = FC.data.items.length ? FC.data.items[0].asset : null; forecastRender(); }
   ["#amt", "#add"].forEach(id => { const el = $(id); if (el) el.addEventListener("input", () => {
-    clearTimeout(FC.timer); FC.timer = setTimeout(forecastRefresh, 450); }); });
-  initFundRows(); initRuleLab(); initTabs();
+    csvLinkUpdate(); clearTimeout(FC.timer); FC.timer = setTimeout(forecastRefresh, 450); }); });
+  ["#goal", "#years"].forEach(id => { const el = $(id); if (el) el.addEventListener("input", planRefresh); });
+  initFundRows(); initRuleLab(); initTabs(); initMix();
   $$("details[data-lazy]").forEach(dt => dt.addEventListener("toggle", () => {
     const box = $(".loader", dt); if (dt.open && box && !box.dataset.loaded) loadDetail(box); }));
 });
