@@ -15,6 +15,7 @@ Policy colours from the assignment (Part 7): GREEN allowed, YELLOW allowed after
 | 2026-11-18 | Claude | Faster fund search: downloads 4 tickers at a time, keeps them in memory for one hour, preloads when the site starts; data sources and offline mode unchanged. | GREEN (app code) | Kept; checked that the numbers are the same and ran `pytest`. |
 | 2026-11-19 | Claude | Forecast: `forecast.py` (block bootstrap scenarios for 3, 5 and 10 years, amount and monthly top-up, chance to keep the target) and tests. | GREEN (app code) | Kept; checked the forecast for SPY and the rule by hand in the browser. |
 | 2026-11-19 | Claude | Redesign into one dark page: sections that open on click, the fund check inside the list, Forecast linked to the target, interactive charts (`templates/one.html`, `_fund_detail.html`, `static/one.css`, `static/one.js`), old pages removed, tests updated (134 passed). | GREEN (app code) | Kept; checked every section in the browser; the Rule Lab numbers are the same as `evidence/evidence_table.md`. |
+| 2026-11-18 | Claude | Translated our own Limits and verdict text from Russian to English | RED (our ideas, AI only translated) | Kept the translation; the content is ours. |
 
 Planned as not done by AI (RED; see the 2026-11-14 row about Rule Card R3–R5 and R8 for what was drafted with AI anyway): the toy example and its expected values, the canary-test explanation, Rule Card R3–R5 and R8,
 the verdict and limits wording, the explanation of the numbers in the evidence table.
