@@ -1,0 +1,21 @@
+<!-- Full check of one fund, opened inside the table of the one page (numbers from build_result, formulas in core.py) -->
+<div class="mini">Compare with
+  <select data-refetch>
+    {% for b in benchmarks %}{% if b != r.fund %}<option value="{{ b }}" {% if b == r.benchmark %}selected{% endif %}>{{ labels[b] }}</option>{% endif %}{% endfor %}
+  </select>
+  <span>{{ r.period }}</span>
+</div>
+<div class="kpis">
+  <div class="kpi"><small>{{ r.fund }} return / year</small><b class="pos">{{ r.claim.actual }}</b></div>
+  <div class="kpi"><small>{{ r.benchmark }} return / year</small><b>{{ r.table[2][2] }}</b></div>
+  <div class="kpi"><small>Sharpe: {{ r.fund }} vs {{ r.benchmark }}</small><b>{{ r.sharpe_fund }} vs {{ r.sharpe_bench }}</b></div>
+  <div class="kpi"><small>Alpha (CAPM)</small><b>{{ r.alpha }}</b></div>
+</div>
+<div class="verdict {{ r.verdict_class }}"><b>{{ r.verdict }}</b>
+  <span class="note">Risk-free rate over the period: {{ r.rf }} a year (FRED DGS3MO).</span></div>
+<div data-fund-chart='{{ {"dates": r.chart.dates, "fund_values": r.chart.fund, "bench_values": r.chart.bench, "fund": r.fund, "bench": r.benchmark} | tojson | forceescape }}'></div>
+<div class="table-wrap" style="margin-top:12px"><table class="cmp">
+  <tr><th>Measure</th><th>{{ r.fund }}</th><th>{{ r.benchmark }}</th></tr>
+  {% for label, a, b in r.table %}<tr><td>{{ label }}</td><td>{{ a }}</td><td>{{ b }}</td></tr>{% endfor %}
+</table></div>
+{% for s in r.info.series if s.offline %}<div class="offline">{{ s.message }}</div>{% endfor %}

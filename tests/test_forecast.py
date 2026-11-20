@@ -1,4 +1,6 @@
 """Тесты страницы Forecast (forecast.py и /forecast). Интернет НЕ нужен: данные synthetic."""
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -50,20 +52,51 @@ def site(tmp_path, monkeypatch):
     return appmod.app.test_client()
 
 
-def test_forecast_page_shows_three_horizons_and_honest_panel(site):
-    html = site.get("/forecast?asset=SPY&amount=1000").get_data(as_text=True)
+def page(site, **q):
+    query = {"target": "8", "start": "2023-01-02", "end": "2026-11-13", "amount": "1000", "add": "0"}
+    query.update(q)
+    return site.get("/", query_string=query).get_data(as_text=True)
+
+
+def test_one_page_has_all_sections_and_forecast_data(site):
+    html = page(site)
     assert 'class="error"' not in html
-    for years in (3, 5, 10):
-        assert f"In {years} years" in html
-    assert "Honest panel" in html and "Not a promise" in html and "data:image/png;base64," in html
+    for title in ["Funds that gave 8% a year or more", "Forecast: your", "Rule Lab: would a simple rule have helped?",
+                  "How we calculate", "Deep analysis", "Honesty panel", 'id="summary"']:
+        assert title in html, title
+    payload = json.loads(html.split('id="fc-data">')[1].split("</script>")[0])
+    assets = [i["asset"] for i in payload["items"]]
+    assert assets[-1] == "RULE_MA10" and len(assets) >= 2
+    assert [r["years"] for r in payload["items"][0]["rows"]] == [3, 5, 10]
+    assert 'href="/forecast"' not in html and 'href="/rule-lab"' not in html      # одна страница, без переходов
 
 
-def test_forecast_for_the_rule_and_bad_inputs(site):
-    assert 'class="error"' not in site.get("/forecast?asset=RULE_MA10&amount=5000").get_data(as_text=True)
-    assert "Please choose a fund from the list." in site.get("/forecast?asset=BITO").get_data(as_text=True)
-    for bad in ["abc", "0", "-5", "1e12"]:
-        assert "Enter the amount as a number" in site.get(f"/forecast?asset=SPY&amount={bad}").get_data(as_text=True)
+def test_monthly_top_up_raises_money_put_in(site):
+    one = json.loads(page(site, add="100").split('id="fc-data">')[1].split("</script>")[0])
+    row = one["items"][0]["rows"][0]
+    assert row["put_in"] == pytest.approx(1000 + 100 * 36)
 
 
-def test_menu_links_to_forecast(site):
-    assert 'href="/forecast"' in site.get("/").get_data(as_text=True)
+def test_api_forecast_recalculates_and_checks_inputs(site):
+    ok = site.get("/api/forecast?target=10&amount=5000&add=50&assets=SPY,RULE_MA10").get_json()
+    assert [i["asset"] for i in ok["items"]] == ["SPY", "RULE_MA10"] and ok["amount"] == 5000
+    assert 0 <= ok["items"][0]["rows"][2]["chance_target"] <= 1
+    for bad in ["amount=abc", "amount=0", "amount=1e12", "amount=1000&add=-5"]:
+        r = site.get(f"/api/forecast?target=10&assets=SPY&{bad}")
+        assert r.status_code == 400 and "Enter the" in r.get_json()["error"], bad
+    assert site.get("/api/forecast?target=10&amount=1000&assets=BITO").status_code == 400
+
+
+def test_bad_amount_on_the_page_gives_clear_error(site):
+    assert "Enter the amount as a number from 1 to" in page(site, amount="abc")
+
+
+def test_high_target_shows_warning(site):
+    assert "a very high target" in page(site, target="40")
+    assert "a very high target" not in page(site, target="5")
+
+
+def test_fund_row_opens_full_check_without_leaving_the_page(site):
+    html = site.get("/api/fund?fund=QQQ&benchmark=SPY&start=2023-01-02&end=2026-11-13&target=8").get_data(as_text=True)
+    assert "data-fund-chart" in html and "Compare with" in html and "advert" not in html.lower()
+    assert "Please choose a fund from the list." in site.get("/api/fund?fund=BITO&start=2023-01-02&end=2026-11-13").get_data(as_text=True)

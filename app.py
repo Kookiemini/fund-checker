@@ -4,7 +4,6 @@
 
 Запуск:  python3 app.py   ->   открыть http://127.0.0.1:5000
 """
-import base64
 import math
 import threading
 import time
@@ -12,7 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from urllib.parse import urlencode
 
-from flask import Flask, abort, render_template, request, send_from_directory
+from flask import Flask, jsonify, render_template, request
+from markupsafe import escape
 
 import core
 import data
@@ -535,6 +535,7 @@ def fund_row(fund: str, prices, info: dict, risk_free, target: float, target_tex
     meets = core.gap_headline(target - cagr)["direction"] != "overstated"  # та же логика, что у подробной страницы
     years = len(returns) / core.TRADING_DAYS  # число лет торговли: так CAGR приводит рост к году
     p0, p1 = float(series.iloc[0]), float(series.iloc[-1])
+    worst_fall = rule.max_drawdown(returns)  # худшее падение от вершины за период (для карточки-итога)
 
     explain = [
         (f"Price on {first.date()}: {p0:.2f} USD. Price on {last.date()}: {p1:.2f} USD (adjusted). "
@@ -562,6 +563,8 @@ def fund_row(fund: str, prices, info: dict, risk_free, target: float, target_tex
         "link": link,
         "explain": explain,
         "used": (first.date(), last.date()),
+        "volatility_value": volatility,
+        "max_drawdown": fmt_pct(worst_fall),
     }
 
 
@@ -618,9 +621,12 @@ def pick_funds(target_pct: float, my_fund: str, benchmark: str, start: date, end
     return {
         "target": target_text,
         "period": f"{start} to {end}",
+        "used_start": start.isoformat(),
+        "used_end": end.isoformat(),
         "selected": selected,
         "matches": matches,
         "best": best,
+        "all_rows": rows,
         "no_data": [n for n in no_data if n["fund"] != my_fund],
         "skipped": skipped,
         "deep": {
@@ -648,24 +654,6 @@ def pick_funds(target_pct: float, my_fund: str, benchmark: str, start: date, end
     }
 
 
-def pick_page():
-    form = read_pick_form()
-    result, error = None, None
-    if request.args.get("target") is not None:  # считаем только после нажатия кнопки
-        try:
-            result = pick_funds(*parse_pick_form(form))
-        except (ValueError, data.DataError) as err:
-            error = str(err)
-        except Exception as err:  # непредвиденная ошибка: без traceback на экране
-            app.logger.error("Unexpected error: %s", type(err).__name__)
-            error = ("Something unexpected went wrong while calculating. "
-                     "Please check the inputs and try again.")
-    return render_template("pick.html", form=form, funds=data.FUNDS, fund_labels=FUND_DESCRIPTIONS,
-                           benchmarks=BENCHMARKS, benchmark_labels=BENCHMARK_LABELS, no_fund=NO_FUND,
-                           result=result, error=error, min_date=data.DOWNLOAD_START,
-                           max_date=date.today().isoformat(), max_target=int(core.MAX_ADVERTISED_PCT))
-
-
 # ---------- Маршрут ----------
 
 @app.route("/")
@@ -673,7 +661,7 @@ def index():
     # Если в адресе есть fund, это подробная проверка одного фонда (страница и её ссылки "Try ..." не менялись)
     if "fund" in request.args:
         return check_page()
-    return pick_page()
+    return one_page()
 
 
 def check_page():
@@ -717,32 +705,6 @@ def team_verdict():
             body = text[len("verdict:"):].strip()
             return None if not body or "…" in body or "..." in body or "[" in body else body
     return None
-
-
-@app.route("/rule-lab")
-def rule_lab():
-    evidence, error = make_evidence.load_evidence(), None
-    if evidence is None:  # первый запуск: доказательства генерирует тот же скрипт (одна команда - python app.py)
-        try:
-            evidence = make_evidence.run()
-        except (make_evidence.EvidenceError, data.DataError) as err:
-            error = str(err)
-        except Exception as err:  # непредвиденная ошибка: без traceback на экране
-            app.logger.error("Unexpected error: %s", type(err).__name__)
-            error = "Something unexpected went wrong while generating the evidence. Run python make_evidence.py to see why."
-    cost = request.args.get("cost", make_evidence.cost_key(rule.COST_DEFAULT))
-    if evidence is not None and cost not in evidence["e2"]:
-        cost = make_evidence.cost_key(rule.COST_DEFAULT)
-    return render_template("rule_lab.html", ev=evidence, error=error, cost=cost,
-                           cost_keys=[make_evidence.cost_key(c) for c in rule.COSTS], costs=rule.COSTS,
-                           rule=rule, team_verdict=team_verdict(), cost_key=make_evidence.cost_key)
-
-
-@app.route("/evidence/figures/<name>")
-def evidence_figure(name):
-    if name not in {"equity.png", "drawdown.png", "neighbours.png"}:
-        abort(404)
-    return send_from_directory(make_evidence.EVIDENCE_DIR / "figures", name)
 
 
 # ---------- Forecast: сценарии на 3, 5 и 10 лет по истории (forecast.py) ----------
@@ -799,41 +761,157 @@ def fmt_money(value: float) -> str:
     return f"{value:,.0f} USD"
 
 
-@app.route("/forecast")
-def forecast_page():
-    form, result, error = read_forecast_form(), None, None
+# ---------- Одна страница: подбор, итог, Forecast, Rule Lab и "How we calculate" ----------
+# Расчёты - в core.py, rule.py и forecast.py; данные - data.py; числа Rule Lab - из evidence/evidence.json.
+# Здесь только сборка данных для экрана и проверка формы.
+
+ADD_MAX = 10_000_000.0
+WARN_TARGET_PCT = 20.0          # от этого желаемого % в год показываем предупреждение
+FIVE_YEARS = 5
+
+
+def parse_money(text: str, low: float, high: float, what: str) -> float:
+    cleaned = str(text).replace(" ", "").replace(",", "").replace("$", "")
     try:
-        asset, amount = parse_forecast_form(form)
-        returns, infos = forecast_returns(asset, date.today())
-        if len(returns) < forecast.MIN_MONTHS:
-            raise data.DataError(f"Too little history for {asset}: {len(returns)} months "
-                                 f"(at least {forecast.MIN_MONTHS} are needed for scenarios).")
-        growth = forecast.simulate(returns, max(forecast.HORIZONS) * 12)
-        rows = forecast.summarize(growth, amount)
-        label = forecast_labels()[asset]
-        chart = base64.b64encode(forecast.fan_chart_png(
-            growth, amount, f"{fmt_money(amount)} in {asset if asset != FORECAST_RULE else 'Rule MA10'}: "
-                            f"scenarios for the next {max(forecast.HORIZONS)} years")).decode("ascii")
-        result = {
-            "asset": asset, "label": label, "amount": fmt_money(amount),
-            "rows": [dict(r, money={p: fmt_money(v) for p, v in r["values"].items()},
-                          median_per_year_text=make_evidence.fmt_pct(r["median_per_year"]),
-                          loss_text=make_evidence.fmt_pct(r["loss_chance"], 0),
-                          half_loss_text=make_evidence.fmt_pct(r["half_loss_chance"], 0)) for r in rows],
-            "history": forecast.history_summary(returns),
-            "chart": chart,
-            "sources": infos,
-            "is_rule": asset == FORECAST_RULE,
-            "offline_messages": [i["message"] for i in infos if i["offline"]],
+        value = float(cleaned) if cleaned else 0.0
+    except ValueError:
+        value = float("nan")
+    if math.isnan(value) or not (low <= value <= high):
+        raise ValueError(f"Enter the {what} as a number from {low:,.0f} to {high:,.0f} USD, e.g. "
+                         f"{'1000' if low >= 1 else '100'}.")
+    return value
+
+
+def read_one_form() -> dict:
+    form = read_pick_form()
+    form["amount"] = request.args.get("amount", f"{forecast.AMOUNT_DEFAULT:,.0f}")
+    form["add"] = request.args.get("add", "0")
+    return form
+
+
+def forecast_block(assets: list, pct: float, amount: float, add: float, today: date) -> dict:
+    """Сценарии на 3, 5 и 10 лет для каждого фонда из списка (и правила MA10), с шансом получить pct% в год."""
+    labels, items, errors = forecast_labels(), [], []
+    for asset in assets:
+        try:
+            returns, infos = forecast_returns(asset, today)
+            if len(returns) < forecast.MIN_MONTHS:
+                raise data.DataError(f"too little history ({len(returns)} months)")
+            sc = forecast.scenarios(returns, amount, add, pct)
+        except data.DataError as err:
+            errors.append(f"{asset}: {err}")
+            continue
+        items.append({"asset": asset, "name": "Rule MA10" if asset == FORECAST_RULE else asset,
+                      "label": labels.get(asset, asset), "history": forecast.history_summary(returns),
+                      "sources": [{k: str(i[k]) for k in ("file", "pull_date", "offline", "message")} for i in infos],
+                      **sc})
+    return {"pct": pct, "amount": amount, "add": add, "items": items, "errors": errors,
+            "horizons": forecast.HORIZONS, "paths": forecast.PATHS, "block": forecast.BLOCK, "seed": forecast.SEED}
+
+
+def summary_block(pick: dict, fc: dict, pct: float) -> dict:
+    """Карточка-итог и предупреждение о слишком высоком проценте."""
+    found = pick["matches"]
+    chance5 = {i["asset"]: next(r["chance_target"] for r in i["rows"] if r["years"] == FIVE_YEARS) for i in fc["items"]}
+    chance10 = {i["asset"]: next(r["chance_target"] for r in i["rows"] if r["years"] == max(forecast.HORIZONS))
+                for i in fc["items"]}
+    best = found[0] if found else None
+    summary = None
+    if best is not None:
+        summary = {"fund": best["fund"], "description": best["description"], "cagr": best["cagr"],
+                   "chance5": chance5.get(best["fund"]), "max_drawdown": best["max_drawdown"]}
+    warning = None
+    all_rows = pick["all_rows"]
+    if pct >= WARN_TARGET_PCT and all_rows:
+        vols = sorted(r["volatility_value"] for r in all_rows)
+        median_vol = vols[len(vols) // 2]
+        risky = found and all(r["volatility_value"] >= median_vol for r in found)
+        n = len(found)
+        best10 = max((chance10[r["fund"]] for r in found if r["fund"] in chance10), default=None)
+        warning = {
+            "pct": f"{pct:g}%", "n": n, "total": len(all_rows),
+            "risky": bool(risky), "plural": n != 1,
+            "best10": None if best10 is None else make_evidence.fmt_pct(best10, 0),
         }
+    return {"summary": summary, "warning": warning}
+
+
+def rule_lab_block():
+    """Числа Rule Lab из evidence/evidence.json (тот же файл, что evidence_table.md)."""
+    evidence, error = make_evidence.load_evidence(), None
+    if evidence is None:  # первый запуск: доказательства генерирует тот же скрипт
+        try:
+            evidence = make_evidence.run()
+        except (make_evidence.EvidenceError, data.DataError) as err:
+            error = str(err)
+        except Exception as err:  # непредвиденная ошибка: без traceback на экране
+            app.logger.error("Unexpected error: %s", type(err).__name__)
+            error = "Something unexpected went wrong while generating the evidence. Run python make_evidence.py to see why."
+    return evidence, error
+
+
+@app.route("/api/forecast")
+def api_forecast():
+    """Пересчёт Forecast при вводе суммы и пополнения (без перезагрузки страницы)."""
+    try:
+        pct = core.parse_advertised_pct(request.args.get("target", ""))
+        amount = parse_money(request.args.get("amount", ""), 1, forecast.AMOUNT_MAX, "amount")
+        add = parse_money(request.args.get("add", "0"), 0, ADD_MAX, "monthly top-up")
+        assets = [a for a in request.args.get("assets", "").split(",") if a in forecast_assets()]
+        if not assets:
+            raise ValueError("Please choose a fund from the list.")
+        return jsonify(forecast_block(assets, pct, amount, add, date.today()))
     except (ValueError, data.DataError) as err:
-        error = str(err)
-    except Exception as err:  # непредвиденная ошибка: без traceback на экране
-        app.logger.error("Unexpected error: %s", type(err).__name__)
-        error = "Something unexpected went wrong while calculating the scenarios. Please try again."
-    return render_template("forecast.html", form=form, assets=forecast_assets(), labels=forecast_labels(),
-                           result=result, error=error, forecast=forecast, rule=rule,
-                           pct=make_evidence.fmt_pct, cost=make_evidence.fmt_cost)
+        return jsonify({"error": str(err)}), 400
+
+
+@app.route("/api/fund")
+def api_fund():
+    """Подробная проверка одного фонда для раскрывающейся строки таблицы (HTML-фрагмент)."""
+    try:
+        fund = request.args.get("fund", "")
+        benchmark = request.args.get("benchmark", data.DEFAULT_BENCHMARK)
+        if fund not in data.FUNDS:
+            raise ValueError("Please choose a fund from the list.")
+        if benchmark not in BENCHMARKS:
+            raise ValueError("Please choose a benchmark from the list.")
+        start, end = date.fromisoformat(request.args["start"]), date.fromisoformat(request.args["end"])
+        target = core.parse_advertised_pct(request.args.get("target", "0"))
+        result = build_result(fund, benchmark, start, end, target)
+        return render_template("_fund_detail.html", r=result, benchmarks=BENCHMARKS, labels=BENCHMARK_LABELS)
+    except (KeyError, ValueError, data.DataError) as err:
+        return f'<div class="error">{escape(str(err))}</div>', 200
+
+
+def one_page():
+    form = read_one_form()
+    pick = fc = top = None
+    error = None
+    if request.args.get("target") is not None:  # считаем только после нажатия кнопки
+        try:
+            target_pct, my_fund, benchmark, start, end = parse_pick_form(form)
+            amount = parse_money(form["amount"], 1, forecast.AMOUNT_MAX, "amount")
+            add = parse_money(form["add"], 0, ADD_MAX, "monthly top-up")
+            pick = pick_funds(target_pct, my_fund, benchmark, start, end)
+            shown = ([pick["selected"]["fund"]] if pick["selected"] and not pick["selected"].get("no_data") else []) \
+                + [r["fund"] for r in pick["matches"]]
+            fc = forecast_block(shown + [FORECAST_RULE], target_pct, amount, add, date.today())
+            top = summary_block(pick, fc, target_pct)
+        except (ValueError, data.DataError) as err:
+            error = str(err)
+        except Exception as err:  # непредвиденная ошибка: без traceback на экране
+            app.logger.error("Unexpected error: %s", type(err).__name__)
+            error = ("Something unexpected went wrong while calculating. "
+                     "Please check the inputs and try again.")
+    evidence, evidence_error = rule_lab_block()
+    return render_template(
+        "one.html", form=form, funds=data.FUNDS, fund_labels=FUND_DESCRIPTIONS, no_fund=NO_FUND,
+        result=pick, fc=fc, top=top, error=error, min_date=data.DOWNLOAD_START,
+        max_date=date.today().isoformat(), max_target=int(core.MAX_ADVERTISED_PCT),
+        ev=evidence, ev_error=evidence_error, rule=rule, cost_keys=[make_evidence.cost_key(c) for c in rule.COSTS],
+        costs=rule.COSTS, cost_key=make_evidence.cost_key, team_verdict=team_verdict(),
+        default_cost=make_evidence.cost_key(rule.COST_DEFAULT), forecast=forecast, benchmarks=BENCHMARKS,
+        benchmark_labels=BENCHMARK_LABELS, default_benchmark=data.DEFAULT_BENCHMARK, deep_general=PICK_DEEP_GENERAL)
 
 
 if __name__ == "__main__":

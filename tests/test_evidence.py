@@ -1,4 +1,4 @@
-"""Тесты скрипта доказательств (make_evidence.py) и страницы Rule Lab. Интернет НЕ нужен.
+"""Тесты скрипта доказательств (make_evidence.py) и раздела Rule Lab на главной странице. Интернет НЕ нужен.
 
 Данные synthetic, все файлы (evidence/, trials.csv, DECISIONS.md) пишутся во временную папку.
 """
@@ -87,7 +87,7 @@ def test_same_window_for_rule_and_benchmark(lab):
 
 def test_rule_lab_numbers_match_the_evidence_table(lab):
     me.run()
-    html = appmod.app.test_client().get("/rule-lab").get_data(as_text=True)
+    html = appmod.app.test_client().get("/").get_data(as_text=True)
     table = (lab / "evidence" / "evidence_table.md").read_text(encoding="utf-8")
     ev = me.load_evidence()
     head = ev["e1"]["headline"][me.cost_key(rule.COST_DEFAULT)]
@@ -99,26 +99,23 @@ def test_rule_lab_numbers_match_the_evidence_table(lab):
 
 def test_rule_lab_honest_panel_and_costs_toggle(lab):
     me.run()
-    client = appmod.app.test_client()
-    html = client.get("/rule-lab").get_data(as_text=True)
-    panel = re.sub(r"<[^>]+>", " ", html.split('id="honest"')[1].split("</section>")[0])
-    assert "2001-01 to 2018-12" in panel and "configurations looked at" in panel and "0.10% per unit" in panel
-    assert "not opened yet" in panel
+    html = appmod.app.test_client().get("/").get_data(as_text=True)
+    panel = re.sub(r"<[^>]+>", " ", html.split('id="t-honest"')[1].split("</details>")[0])
+    assert "2001-01 to 2018-12" in panel and "configurations looked at" in panel and "not opened yet" in panel
     assert "Team verdict: not written yet" in html
-    high = client.get("/rule-lab?cost=0.0050").get_data(as_text=True)
-    assert "Net of 0.50% per switch" in high
-    assert client.get("/evidence/figures/equity.png").status_code == 200
-    assert client.get("/evidence/figures/secret.txt").status_code == 404
+    for cost in rule.COSTS:                                  # переключатель издержек: блок на каждый уровень
+        key = me.cost_key(cost)
+        assert f'data-cost="{key}"' in html and f"Net of {me.fmt_cost(cost)} per switch" in html, key
 
 
 def test_rule_lab_shows_team_verdict_from_result_card(lab):
     me.run()
     (lab / "RESULT_CARD.md").write_text("Verdict: the difference is not distinguishable from zero.\n", encoding="utf-8")
-    html = appmod.app.test_client().get("/rule-lab").get_data(as_text=True)
+    html = appmod.app.test_client().get("/").get_data(as_text=True)
     assert "Team verdict:</b> the difference is not distinguishable from zero." in html
 
 
 def test_rule_lab_generates_evidence_on_first_visit(lab):
-    html = appmod.app.test_client().get("/rule-lab").get_data(as_text=True)
-    assert 'class="error"' not in html and "E1. Headline table" in html
+    html = appmod.app.test_client().get("/").get_data(as_text=True)
+    assert 'class="error"' not in html and "E1–E8 evidence tables" in html and 'id="rl-data"' in html
     assert (lab / "evidence" / "evidence.json").exists()

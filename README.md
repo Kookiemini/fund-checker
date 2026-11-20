@@ -23,7 +23,7 @@ Then start the app (one command):
 python3 app.py
 ```
 
-Open http://127.0.0.1:5000 in your browser. While the site runs, it preloads prices in the background, downloads up to 4 tickers at a time and reuses a download for one hour, so after the first minute searches take seconds (sources and offline mode are unchanged). The main page is the fund finder: enter the yearly return you want (a number from 0 to 1000, % per year, decimals allowed; checked in the browser and on the server) and click "Find funds". Under "Additional settings" you can choose the period, the benchmark and, optionally, one fund: it is shown first as "Your selected fund" even if it gave less than you want, and it is not repeated in the list. Funds with no data for the period are listed under "Funds without data for this period" with the date their history starts. Each fund in the list links to the detailed check described below. The form is filled with defaults (ARKK vs SPY, last 3 years, advertised return 35% per year); click "Check". The **first run needs internet** (it downloads and saves the data); after that the app can also work offline. To stop the app press Ctrl+C.
+Open http://127.0.0.1:5000 in your browser. While the site runs, it preloads prices in the background, downloads up to 4 tickers at a time and reuses a download for one hour, so after the first minute searches take seconds (sources and offline mode are unchanged). Everything is on **one page** (dark design), split into sections that open when you click their heading. At the top you enter the yearly return you want (a number from 0 to 1000, % per year, decimals allowed; checked in the browser and on the server), the amount in USD (any number) and an optional monthly top-up, then click "Find funds". Under "Additional settings" you can choose the period and, optionally, one fund: it is shown first as "Your selected fund" even if it gave less than you want. The sections are: **Funds** (open by default; click a fund to open its full check right in the list, with its own "Compare with" benchmark), **Forecast** (the chance of keeping your % for 3, 5 and 10 years for every fund found and for the Rule MA10, plus a fan chart; it recalculates as you type the amount or top-up), **Rule Lab** (Assignment 2, see below) and **How we calculate** (tabs "Deep analysis" and "Honesty panel"). All charts are interactive: hover or tap to see the values, click a legend item to hide or show a line. A summary card "Best match" shows the fund closest to your target, and a warning appears for targets of 20% a year or more. Funds with no data for the period are listed under "Funds without data for this period" with the date their history starts. The **first run needs internet** (it downloads and saves the data); after that the app can also work offline. To stop the app press Ctrl+C.
 
 ## Rule Lab (Assignment 2): would a simple rule have helped?
 
@@ -34,13 +34,13 @@ Settings, samples and costs are the constants at the top of `rule.py`; the full 
 ```
 python make_evidence.py               # evidence for the development sample (train + validation); test stays closed
 python make_evidence.py --open-test   # ONCE: open the test period 2019-01 to 2026-10 (recorded in DECISIONS.md)
-python app.py                         # then open http://127.0.0.1:5000/rule-lab
+python app.py                         # then open http://127.0.0.1:5000 and open the "Rule Lab" section
 ```
 
 `make_evidence.py` writes `evidence/evidence.json`, `evidence/evidence_table.md` (E1–E8), `evidence/result_card_numbers.md`
 and `evidence/figures/`, and appends one line per configuration and sample to `trials.csv` (lines are never deleted).
-The Rule Lab page reads `evidence/evidence.json`, so its numbers are always the same as in the evidence table;
-if the evidence has never been generated, the page runs the script itself on the first visit.
+The Rule Lab section reads `evidence/evidence.json`, so its numbers are always the same as in the evidence table;
+if the evidence has never been generated, the site runs the script itself on the first visit.
 Opening the test a second time needs `--open-test --reopen`; it is recorded and counted.
 
 Files for the assignment: `RULE_CARD.md`, `RESULT_CARD.md`, `trials.csv`, `evidence/`, `REUSE_CHANGES.md`,
@@ -52,8 +52,8 @@ Files for the assignment: `RULE_CARD.md`, `RESULT_CARD.md`, `trials.csv`, `evide
 pytest -v
 ```
 
-125 tests (58 in `tests/test_core.py`, 23 in `tests/test_data.py`, 19 in `tests/test_app.py`, 16 in `tests/test_rule.py`, 9 in `tests/test_evidence.py`). No internet is needed.
-The toy test in `tests/test_rule.py` is skipped until the team writes its hand-computed values into `TOY_EXPECTED`; after that all 125 must pass.
+134 tests (58 in `tests/test_core.py`, 23 in `tests/test_data.py`, 19 in `tests/test_app.py`, 16 in `tests/test_rule.py`, 9 in `tests/test_evidence.py`, 9 in `tests/test_forecast.py`). No internet is needed.
+The toy test in `tests/test_rule.py` is skipped until the team writes its hand-computed values into `TOY_EXPECTED`; after that all 134 must pass.
 `tests/test_rule.py` tests the rule core: the toy example, two canary tests for look-ahead (future prices must not change past positions;
 on a random walk the honest rule has no edge, while a version without the one-month lag does), and known answers for costs, drawdown, cash, CAGR,
 the standard error of Sharpe, the bootstrap, break-even and the expected best-of-noise Sharpe.
@@ -70,7 +70,10 @@ the standard error of Sharpe, the bootstrap, break-even and the expected best-of
 | `data.py` | All data loading (Yahoo Finance, FRED), saving to `data/raw/`, offline fallback, join counts. No math. |
 | `core.py` | Pure functions: returns, volatility, Sharpe, beta, CAPM, alpha, gap, verdict, input validation. No internet, no files, no screen. |
 | `app.py` | The screen only (Flask). Calls `data.py` and `core.py`, calculates nothing itself; only turns numbers into text. |
-| `templates/index.html` | The HTML page: form, headline with the "Why this number?" panel, chart (the JavaScript only draws), tables, Deep analysis, honesty panel. |
+| `forecast.py` | Forecast scenarios: block bootstrap of past monthly returns (10,000 paths, 12-month blocks, fixed seed), monthly top-ups, chance to reach the target. |
+| `templates/one.html`, `templates/_fund_detail.html` | The one-page site and the full check of one fund that opens inside the list. |
+| `static/one.css`, `static/one.js` | Dark design; interactive charts and live forecast (the JavaScript only draws and asks the server, it calculates nothing). |
+| `templates/index.html` | The detailed check page (opened with `?fund=...`): form, headline with the "Why this number?" panel, chart, tables, Deep analysis, honesty panel. |
 | `tests/` | Tests for `core.py`, `data.py` and the page (`app.py`). |
 | `data/raw/` | Saved downloads with the pull date in the file name (never edit by hand). |
 

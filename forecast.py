@@ -106,3 +106,66 @@ def fan_chart_png(growth: np.ndarray, amount: float, title: str) -> bytes:
     fig.savefig(out, format="png", dpi=110)
     plt.close(fig)
     return out.getvalue()
+
+
+# ---------- Сценарии с ежемесячным пополнением и целью "ваш % в год" ----------
+
+def sample_returns(returns: pd.Series, months: int, paths: int = PATHS, block: int = BLOCK,
+                   seed: int = SEED) -> np.ndarray:
+    """Матрица месячных доходностей будущих сценариев: paths строк, months столбцов (блочный бутстреп)."""
+    values = returns.values
+    idx = rule._block_indices(len(values), block, paths, np.random.default_rng(seed))
+    while idx.shape[1] < months:
+        idx = np.concatenate([idx, rule._block_indices(len(values), block, paths,
+                                                       np.random.default_rng(seed + idx.shape[1]))], axis=1)
+    return values[idx[:, :months]]
+
+
+def wealth_paths(monthly: np.ndarray, amount: float, add: float) -> np.ndarray:
+    """Сумма на конец каждого месяца: деньги растут на доходность месяца, затем добавляется пополнение."""
+    wealth = np.empty_like(monthly)
+    value = np.full(monthly.shape[0], float(amount))
+    for m in range(monthly.shape[1]):
+        value = value * (1 + monthly[:, m]) + add
+        wealth[:, m] = value
+    return wealth
+
+
+def steady_path(amount: float, add: float, pct: float, months: int) -> np.ndarray:
+    """Сколько было бы, если бы деньги росли ровно на pct% в год (с теми же пополнениями)."""
+    rate = (1 + pct / 100) ** (1 / 12) - 1
+    out, value = np.empty(months), float(amount)
+    for m in range(months):
+        value = value * (1 + rate) + add
+        out[m] = value
+    return out
+
+
+def scenarios(returns: pd.Series, amount: float, add: float, pct: float, horizons=HORIZONS,
+              paths: int = PATHS) -> dict:
+    """Всё для раздела Forecast: итоги по горизонтам, шанс получить pct% в год и полосы для графика."""
+    months = max(horizons) * 12
+    wealth = wealth_paths(sample_returns(returns, months, paths), amount, add)
+    target = steady_path(amount, add, pct, months)
+    put_in = amount + add * np.arange(1, months + 1)
+    rows = []
+    for years in horizons:
+        col = years * 12 - 1
+        final = wealth[:, col]
+        rows.append({
+            "years": years,
+            "values": {p: float(v) for p, v in zip(PERCENTILES, np.percentile(final, PERCENTILES))},
+            "target": float(target[col]),
+            "put_in": float(put_in[col]),
+            "chance_target": float((final >= target[col]).mean()),   # доля сценариев, где вышло не меньше цели
+            "loss_chance": float((final < put_in[col]).mean()),      # итог меньше, чем вложено
+        })
+    q = np.percentile(wealth, PERCENTILES, axis=0)
+    start = [float(amount)]
+    return {
+        "rows": rows,
+        "band": {str(p): start + [float(v) for v in q[i]] for i, p in enumerate(PERCENTILES)},
+        "target_path": start + [float(v) for v in target],
+        "put_in_path": start + [float(v) for v in put_in],
+        "months": months,
+    }

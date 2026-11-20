@@ -14,7 +14,9 @@
   Sharpe ± standard error, paired intervals (bootstrap and analytic), drawdown, VaR, break-even cost, expected best-of-noise Sharpe.
 - `make_evidence.py` — the script that generates `evidence/` (E1–E8, figures) and appends to `trials.csv`;
   the test period opens only with `--open-test` and the opening is written to `DECISIONS.md`.
-- `templates/rule_lab.html` and the `/rule-lab` route — the Rule Lab page: rule vs. benchmark, window, trial counter, costs toggle, verdict.
+- The Rule Lab section of the site (first a separate `/rule-lab` page, since 2026-11-19 a section of the one-page site in `templates/one.html`): rule vs. benchmark, window, trial counter, costs toggle, verdict, E1–E8.
+- `forecast.py` and the Forecast section: scenarios for 3, 5 and 10 years from past monthly returns (circular block bootstrap, 10,000 paths, 12-month blocks, fixed seed), with an amount and a monthly top-up; the chance to keep the yearly return the user entered, for every fund found and for the rule. Added because the instructor asked for a forecast.
+- `templates/_fund_detail.html`, `static/one.css`, `static/one.js`, `tests/test_forecast.py`: the full check of one fund that opens inside the list, the dark design, interactive charts, tests for the one-page site and the forecast.
 - Tests: `tests/test_rule.py` (toy test, canary tests, known answers for costs, drawdown, cash, SE, bootstrap, break-even)
   and `tests/test_evidence.py` (trial ledger, test opened once, page numbers equal the evidence table).
 - `RULE_CARD.md`, `RESULT_CARD.md`, `trials.csv`, this file, `DECISIONS.md`, `AI_USE.md`, `CONTRIBUTIONS.md`.
@@ -24,7 +26,7 @@
   the detailed fund check is still reachable from every fund in the list. Why: a user usually starts from the yearly return they want, not from an advert to check, so the finder answers that question first; the claim check stays one click away for every fund.
 - Fund list: removed BRK-B (a single stock) and BITO (bitcoin futures, short history); added VTI, VUG, XLV, VNQ, TLT.
   Benchmarks: removed VTI, IVV (almost the same as SPY) and VT (almost the same as ACWI).
-- Main page: a link to the Rule Lab.
+- One-page site (2026-11-19): the fund finder, Forecast, Rule Lab and "How we calculate" (Deep analysis, Honesty panel) are sections of one page that open on click; a fund in the list opens its full check in place; the Forecast uses the yearly return, amount and monthly top-up entered at the top; charts show values on hover or tap. Why: the instructor asked for a forecast connected to the user's target, and one page is easier for a beginner than several pages. The rule, its parameters, windows and costs did not change; the Rule Lab numbers come from the same `evidence/evidence.json`. The old pages `/rule-lab`, `/forecast` and the separate finder template were removed; the detailed check of one fund (`?fund=...`) is still available.
 - `requirements.txt`: added `matplotlib` for the evidence figures.
 - Speed (`app.py`): fund prices are downloaded 4 at a time, kept in memory for one hour and preloaded when the site starts; the data sources, saved files and offline mode in `data.py` are unchanged.
 - Changed after feedback on Assignment 1: the instructor asked us to turn the product into a fund finder by the yearly return a user wants, to make the start page clear to a beginner within seconds, to remove texts about adverts, to clean the fund and benchmark lists, to keep the Deep analysis and the Honesty panel visible, to let the user pick one fund, to limit the input to 0–1000% and to show funds without data instead of hiding them. In response we changed:
@@ -35,4 +37,4 @@
   (5) the lists: BRK-B (a single stock) and BITO (bitcoin futures, short history) removed; VTI, VUG, XLV, VNQ, TLT added (broad market, growth, healthcare, real estate, bonds); benchmarks VTI, IVV and VT removed as near-duplicates of SPY and ACWI.
 
 ## Dropped
-- No code was deleted. The advertised-claim form is no longer the start page; BRK-B, BITO, VTI, IVV and VT left the lists for the reasons above.
+- Removed with the one-page redesign: the separate pages `templates/rule_lab.html` (`/rule-lab`), `templates/forecast.html` (`/forecast`) and `templates/pick.html`; their content is now in `templates/one.html`. No calculation code was deleted. The advertised-claim form is no longer the start page; BRK-B, BITO, VTI, IVV and VT left the lists for the reasons above.
